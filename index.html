@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>实时识谱练习 · 单音乐器通用</title>
+<!-- PWA：添加到主屏幕后全屏独立运行 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2f6fed">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="识谱练习">
+<style>
+  /* ========== 全局样式：手机竖屏优先 ========== */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f4f8; color: #333;
+    display: flex; justify-content: center;
+    overscroll-behavior: none;          /* 禁止下拉刷新/回弹，接近原生手感 */
+    touch-action: manipulation;         /* 消除双击缩放延迟 */
+  }
+  #app {
+    width: 100%; max-width: 480px; min-height: 100%;
+    background: #fff; display: flex; flex-direction: column;
+    /* 安全区适配：刘海屏/手势条不被遮挡（standalone 模式下生效） */
+    padding: calc(12px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
+             calc(24px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
+  }
+  h1 { font-size: 18px; text-align: center; }
+  .subtitle { font-size: 11px; color: #999; text-align: center; margin: 4px 0 10px; }
+
+  /* 实时数据面板 */
+  #realtime { display: flex; gap: 8px; margin-bottom: 10px; }
+  .stat-box {
+    flex: 1; background: #f7f9fc; border: 1px solid #e3e8f0; border-radius: 10px;
+    text-align: center; padding: 8px 4px;
+  }
+  .stat-box .label { font-size: 11px; color: #888; }
+  .stat-box .value { font-size: 22px; font-weight: 700; margin-top: 2px; min-height: 28px; }
+  .stat-box .value small { font-size: 11px; color: #aaa; font-weight: 400; display: block; }
+  #accBox.correct { background: #e8f7ec; border-color: #b7e2c3; }
+  #accBox.wrong   { background: #fdeceb; border-color: #f5c6c2; }
+
+  /* 画布区 */
+  #canvasWrap { position: relative; border: 1px solid #e3e8f0; border-radius: 12px; overflow: hidden; background: #fdfdfd; }
+  #score { display: block; width: 100%; height: 190px; }
+  #resultOverlay {
+    position: absolute; inset: 0; display: none;
+    background: rgba(255,255,255,.94); z-index: 5;
+    flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  }
+  #resultOverlay .big { font-size: 40px; font-weight: 800; }
+  #resultOverlay .detail { font-size: 13px; color: #666; }
+  #resultOverlay button { margin-top: 6px; }
+
+  /* 控制区 */
+  #controls { margin-top: 12px; }
+  .btn-row { display: flex; gap: 8px; }
+  button {
+    flex: 1; padding: 12px 0; font-size: 15px; font-weight: 600;
+    border: none; border-radius: 10px; background: #2f6fed; color: #fff;
+  }
+  button:active { opacity: .8; }
+  button:disabled { background: #c9d4ea; }
+  button.secondary { background: #eef1f6; color: #555; }
+  button.danger { background: #eef1f6; color: #d0453c; }
+  .slider-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; }
+  .slider-row .name { width: 86px; color: #666; flex-shrink: 0; }
+  .slider-row input[type=range] { flex: 1; }
+  .slider-row .val { width: 74px; text-align: right; font-weight: 700; flex-shrink: 0; }
+  .check-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: #666; }
+  #statusHint { font-size: 11px; color: #b58a2e; text-align: center; margin-top: 8px; min-height: 14px; }
+
+  /* 练习记录 */
+  #records { margin-top: 16px; border-top: 1px dashed #e0e4ea; padding-top: 10px; }
+  #records .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  #records .head span { font-size: 13px; font-weight: 700; color: #555; }
+  #records .head button { flex: none; padding: 4px 10px; font-size: 11px; background: #eef1f6; color: #999; }
+  .rec-item {
+    display: flex; justify-content: space-between; font-size: 12px; color: #666;
+    padding: 5px 2px; border-bottom: 1px solid #f2f4f8;
+  }
+  .rec-item b { color: #2f6fed; }
+  .rec-empty { font-size: 12px; color: #bbb; text-align: center; padding: 8px 0; }
+  .foot-note { font-size: 10px; color: #c0c0c0; text-align: center; margin-top: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>实时识谱练习</h1>
+  <div class="subtitle">单音乐器通用（口琴 / 竖笛 / 吉他 / 小提琴 / 人声）· 五线谱《欢乐颂》</div>
+
+  <!-- 实时数据面板 -->
+  <div id="realtime">
+    <div class="stat-box">
+      <div class="label">识别音名</div>
+      <div class="value" id="rtNote">—</div>
+    </div>
+    <div class="stat-box">
+      <div class="label">频率</div>
+      <div class="value" id="rtFreq">—<small>Hz</small></div>
+    </div>
+    <div class="stat-box" id="accBox">
+      <div class="label">正确率</div>
+      <div class="value" id="rtAcc">--<small>%</small></div>
+    </div>
+  </div>
+
+  <!-- 乐谱画布 -->
+  <div id="canvasWrap">
+    <canvas id="score"></canvas>
+    <div id="resultOverlay">
+      <div class="big" id="resultAcc">0%</div>
+      <div class="detail" id="resultDetail"></div>
+      <button onclick="App.retry()">再来一次</button>
+    </div>
+  </div>
+
+  <!-- 控制面板 -->
+  <div id="controls">
+    <div class="btn-row">
+      <button id="btnMain" onclick="App.onMainButton()">开始练习</button>
+      <button id="btnRetry" class="secondary" onclick="App.retry()" disabled>重试</button>
+    </div>
+    <div class="slider-row">
+      <span class="name">速度 BPM</span>
+      <input type="range" id="sliderBpm" min="60" max="180" step="2" value="100">
+      <span class="val" id="valBpm">100</span>
+    </div>
+    <div class="slider-row">
+      <span class="name">音准容错</span>
+      <input type="range" id="sliderTol" min="10" max="100" step="5" value="50">
+      <span class="val" id="valTol">±50 音分</span>
+    </div>
+    <div class="check-row">
+      <input type="checkbox" id="chkOctave">
+      <label for="chkOctave">忽略八度（低音乐器如吉他可关闭八度匹配）</label>
+    </div>
+    <div id="statusHint"></div>
+  </div>
+
+  <!-- 练习记录 -->
+  <div id="records">
+    <div class="head">
+      <span>练习记录（近 5 次）</span>
+      <button onclick="StatsStorage.clear()">清空</button>
+    </div>
+    <div id="recList"></div>
+  </div>
+
+  <div class="foot-note">最小原型：仅支持单音演奏；多音 / 漏气杂音将被判为无效静音。<br>请使用 HTTPS 或 localhost 打开并允许麦克风权限。</div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+ * 模块1：乐谱数据模块 ScoreData
+ * 乐谱音符时序数据（供五线谱渲染使用）。pitch 为科学音名（如 E4），beats 为拍数。
+ * startSec / endSec 由 buildTimeline() 按 BPM 实时计算，改速度即整体重排。
+ * ===================================================================== */
+const ScoreData = {
+  name: "欢乐颂 (Ode to Joy)",
+  timeSignature: 4,          // 每小节拍数（拍号分子）
+  beatUnit: 4,               // 以四分音符为一拍（拍号分母）
+  defaultBPM: 100,
+  // 《欢乐颂》C 调片段：8 小节，覆盖四分 / 八分 / 附点四分 / 二分四种时值
+  // 音级：E E F G | G F E D | C C D E | E. D D - | E E F G | G F E D | C C D E | D. C C -
+  // beats 含义：1=四分  0.5=八分  1.5=附点四分  2=二分
+  notes: [
+    { pitch: "E4", beats: 1 }, { pitch: "E4", beats: 1 },
+    { pitch: "F4", beats: 1 }, { pitch: "G4", beats: 1 },
+    { pitch: "G4", beats: 1 }, { pitch: "F4", beats: 1 },
+    { pitch: "E4", beats: 1 }, { pitch: "D4", beats: 1 },
+    { pitch: "C4", beats: 1 }, { pitch: "C4", beats: 1 },
+    { pitch: "D4", beats: 1 }, { pitch: "E4", beats: 1 },
+    { pitch: "E4", beats: 1.5 }, { pitch: "D4", beats: 0.5 }, { pitch: "D4", beats: 2 },
+    { pitch: "E4", beats: 1 }, { pitch: "E4", beats: 1 },
+    { pitch: "F4", beats: 1 }, { pitch: "G4", beats: 1 },
+    { pitch: "G4", beats: 1 }, { pitch: "F4", beats: 1 },
+    { pitch: "E4", beats: 1 }, { pitch: "D4", beats: 1 },
+    { pitch: "C4", beats: 1 }, { pitch: "C4", beats: 1 },
+    { pitch: "D4", beats: 1 }, { pitch: "E4", beats: 1 },
+    { pitch: "D4", beats: 1.5 }, { pitch: "C4", beats: 0.5 }, { pitch: "C4", beats: 2 },
+  ]
+};
+
+/* 音名 → MIDI 编号（C4=60），供频率比对与谱表定位使用 */
+function pitchToMidi(pitch) {
+  const NAMES = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
+  const m = pitch.match(/^([A-G]#?)(\d)$/);
+  return NAMES[m[1]] + (parseInt(m[2], 10) + 1) * 12;
+}
+/* MIDI → 频率（A4=440Hz 十二平均律） */
+function midiToFreq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
+
+/**
+ * 按当前 BPM 展开时间轴，并初始化每个音符的比对状态
+ * @returns {Array} notes: [{pitch,midi,freq,startSec,endSec,beats,matched,detectedWrong,done,correct}]
+ */
+function buildTimeline(bpm) {
+  const secPerBeat = 60 / bpm;
+  let t = 0;
+  return ScoreData.notes.map(n => {
+    const note = {
+      pitch: n.pitch, beats: n.beats,
+      midi: pitchToMidi(n.pitch), freq: midiToFreq(pitchToMidi(n.pitch)),
+      startSec: t, endSec: t + n.beats * secPerBeat,
+      matched: false, detectedWrong: false, done: false, correct: false
+    };
+    t = note.endSec;
+    return note;
+  });
+}
+
+/* =====================================================================
+ * 模块2：WebAudio 麦克风采集 + 音频分帧预处理 AudioCapture
+ * ScriptProcessorNode 每帧回调 2048 采样点；维护 4096 点滚动缓冲，
+ * 隔点降采样至有效采样率 22050/24000，扩大低频检测下限（兼容吉他低音弦）。
+ * 预处理：RMS 静音门限 + 削波检测 → 无声/多音直接判无效帧。
+ * ===================================================================== */
+const AudioCapture = {
+  ctx: null, stream: null, processor: null, source: null,
+  rolling: null, rollIdx: 0,       // 4096 点滚动缓冲
+  effectiveRate: 22050,            // 降采样后的等效采样率
+  running: false,
+  // 可调参数（最小原型取固定经验值）
+  RMS_GATE: 0.006,                 // 静音门限：低于视为无声（漏气/未吹）
+  CLIP_RATIO: 0.005,               // 削波判定：触顶采样占比超过即视为多音/爆音
+
+  /** 初始化 AudioContext 与麦克风（需在用户点击手势内调用） */
+  async init() {
+    if (this.running) return true;
+    // AudioContext 必须在用户手势内同步创建并 resume（iOS Safari 限制）
+    const AC = window.AudioContext || window.webkitAudioContext;
+    this.ctx = new AC();
+    this.ctx.resume();
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    this.source = this.ctx.createMediaStreamSource(this.stream);
+
+    // 4096 点滚动缓冲初始化
+    this.rolling = new Float32Array(4096);
+    this.rollIdx = 0;
+    this.effectiveRate = this.ctx.sampleRate / 2;
+
+    this.processor = this.ctx.createScriptProcessor(2048, 1, 1);
+    this.processor.onaudioprocess = e => this._onFrame(e.inputBuffer.getChannelData(0));
+    this.source.connect(this.processor);
+
+    // 接一个零增益节点到 destination，保证 Safari 等浏览器持续回调且不外放
+    const mute = this.ctx.createGain();
+    mute.gain.value = 0;
+    this.processor.connect(mute);
+    mute.connect(this.ctx.destination);
+    this.running = true;
+    return true;
+  },
+
+  /** 单帧预处理：滚动缓冲 → 降采样 → RMS/削波检查 → 交给音高检测 */
+  _onFrame(chunk) {
+    // 写入滚动缓冲
+    for (let i = 0; i < chunk.length; i++) {
+      this.rolling[this.rollIdx] = chunk[i];
+      this.rollIdx = (this.rollIdx + 1) % 4096;
+    }
+    // 隔点降采样：rolling 中 rollIdx 指向最旧采样点，从最旧开始隔 2 取 1
+    // 得到等效 22050/24000Hz 的 2048 点帧（时间跨度约 93ms）
+    const ds = new Float32Array(2048);
+    for (let i = 0; i < 2048; i++) {
+      ds[i] = this.rolling[(this.rollIdx + i * 2) % 4096];
+    }
+
+    // --- 预处理 1：RMS 静音门限 ---
+    let sum = 0;
+    for (let i = 0; i < ds.length; i++) sum += ds[i] * ds[i];
+    const rms = Math.sqrt(sum / ds.length);
+    if (rms < this.RMS_GATE) { App.onPitch(null, rms); return; }
+
+    // --- 预处理 2：削波检测（多音/爆音 → 无效帧） ---
+    let clip = 0;
+    for (let i = 0; i < ds.length; i++) if (Math.abs(ds[i]) > 0.97) clip++;
+    if (clip / ds.length > this.CLIP_RATIO) { App.onPitch(null, rms, true); return; }
+
+    // --- 交给模块3 做 YIN 检测 ---
+    const result = PitchDetector.detect(ds, this.effectiveRate);
+    App.onPitch(result, rms);
+  },
+
+  get now() { return this.ctx ? this.ctx.currentTime : 0; },
+  destroy() {
+    if (this.processor) this.processor.disconnect();
+    if (this.source) this.source.disconnect();
+    if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+    if (this.ctx) this.ctx.close();
+    this.running = false;
+  }
+};
+
+/* =====================================================================
+ * 模块3：YIN 音高检测 + 频率转音名 PitchDetector
+ * YIN：差分函数 → 累积均值归一(CMNDF) → 绝对阈值找第一个谷 → 抛物线插值。
+ * 通用单音检测，适配 60~1600Hz（吉他低音弦 ~82Hz 到小提琴高音区）。
+ * ===================================================================== */
+const PitchDetector = {
+  MIN_FREQ: 60, MAX_FREQ: 1600, THRESHOLD: 0.15, MIN_CLARITY: 0.80,
+  NOTE_NAMES: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"],
+
+  /**
+   * 对一帧降采样信号执行 YIN 检测
+   * @param {Float32Array} buf 信号帧
+   * @param {number} rate 该帧等效采样率
+   * @returns {null|{freq:number,name:string,midi:number,cents:number,clarity:number}}
+   */
+  detect(buf, rate) {
+    const half = Math.floor(buf.length / 2);
+    const maxTau = Math.min(half - 1, Math.floor(rate / this.MIN_FREQ));
+    const minTau = Math.max(2, Math.floor(rate / this.MAX_FREQ));
+    const yin = new Float32Array(half);
+
+    // 第1步：差分函数 d(tau)
+    for (let tau = 0; tau <= maxTau; tau++) {
+      let sum = 0;
+      for (let i = 0; i < half; i++) {
+        const delta = buf[i] - buf[i + tau];
+        sum += delta * delta;
+      }
+      yin[tau] = sum;
+    }
+    // 第2步：累积均值归一 CMNDF
+    yin[0] = 1;
+    let running = 0;
+    for (let tau = 1; tau <= maxTau; tau++) {
+      running += yin[tau];
+      yin[tau] = running === 0 ? 1 : yin[tau] * tau / running;
+    }
+    // 第3步：找第一个低于阈值的谷
+    let tauEst = -1;
+    for (let tau = minTau; tau < maxTau; tau++) {
+      if (yin[tau] < this.THRESHOLD) {
+        while (tau + 1 < maxTau && yin[tau + 1] < yin[tau]) tau++;
+        tauEst = tau;
+        break;
+      }
+    }
+    // 未过阈值 → 取全局最小谷（若清晰度过低仍判无效）
+    if (tauEst < 0) {
+      let best = minTau;
+      for (let tau = minTau + 1; tau <= maxTau; tau++) if (yin[tau] < yin[best]) best = tau;
+      if (yin[best] > 0.5) return null;   // 完全无明显周期性 → 杂音
+      tauEst = best;
+    }
+    // 第4步：抛物线插值细化周期，提升音分精度
+    const betterTau = this._parabolic(yin, tauEst);
+    const freq = rate / betterTau;
+    const clarity = 1 - yin[tauEst];
+    if (clarity < this.MIN_CLARITY) return null;
+    return this.freqToNote(freq, clarity);
+  },
+
+  /** 抛物线插值：用谷点及左右两点拟合极小值位置 */
+  _parabolic(yin, tau) {
+    if (tau <= 0 || tau >= yin.length - 1) return tau;
+    const s0 = yin[tau - 1], s1 = yin[tau], s2 = yin[tau + 1];
+    const denom = 2 * (2 * s1 - s2 - s0);
+    return denom === 0 ? tau : tau + (s2 - s0) / denom;
+  },
+
+  /** 频率 → 音名 + 相对最近标准音的音分偏差 */
+  freqToNote(freq, clarity) {
+    if (freq <= 0 || !isFinite(freq)) return null;
+    const midiFloat = 69 + 12 * Math.log2(freq / 440);
+    const midi = Math.round(midiFloat);
+    const cents = Math.round((midiFloat - midi) * 100);       // 相对本音名的偏差
+    const name = this.NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+    return { freq, name, midi, cents, clarity };
+  }
+};
+
+/* =====================================================================
+ * 模块4：Canvas 五线谱渲染 + 时间轴滚动 ScoreRenderer
+ * 传统五线谱：高音谱号 + 4/4 拍号 + 小节线/终止线 + 小节号 + 节拍指示灯
+ * 音符符号：符头（实心/空心）、符干（自动定向）、符尾（八分）、附点、加线
+ * 卡拉OK式横向滚动：谱号与拍号固定在左侧「谱头区」，乐谱内容从右向左流动。
+ * ===================================================================== */
+const ScoreRenderer = {
+  canvas: null, ctx2d: null, dpr: 1, W: 0, H: 0,
+  PX_PER_SEC: 85,           // 每秒像素（滚动速度）
+  PLAYHEAD_RATIO: 0.30,     // 播放线位置
+  GUTTER_W: 84,             // 左侧谱头区（谱号/拍号）宽度，乐谱内容在此左侧被裁剪
+  GAP: 13,                  // 五线谱线间距（一个音级 = 半线间距）
+  STEM_LEN: 43,             // 符干长度
+  COLORS: {
+    bg: "#fdfdfd", staff: "#9aa3b0", barline: "#c3cad6", playhead: "#ff5722",
+    ink: "#2b2f36", correct: "#2e9e5b", wrong: "#e53935", active: "#f5a623",
+    label: "#aab2c0", labelOn: "#7d8899", measure: "#b9c0cc"
+  },
+
+  init(canvas) {
+    this.canvas = canvas;
+    this.ctx2d = canvas.getContext("2d");
+    this.resize();
+    window.addEventListener("resize", () => this.resize());
+  },
+
+  /** 高分屏适配：CSS 尺寸 × devicePixelRatio */
+  resize() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.dpr = window.devicePixelRatio || 1;
+    this.W = rect.width; this.H = rect.height;
+    this.canvas.width = Math.round(rect.width * this.dpr);
+    this.canvas.height = Math.round(rect.height * this.dpr);
+  },
+
+  /** MIDI → 全音阶位置（C=0 … B=6 逐音级累加），用于把音高映射到谱表纵坐标 */
+  _diatonic(midi) {
+    const LETTER = [0, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6];   // 半音→音级，黑键依附其下音级
+    return (Math.floor(midi / 12) - 1) * 7 + LETTER[((midi % 12) + 12) % 12];
+  },
+
+  /** 由拍数推导符头样式：{filled 实心, dotted 附点, flag 符尾} */
+  _noteStyle(beats) {
+    return {
+      filled: beats < 2,                        // ≥2 拍为空心（二分音符）
+      dotted: beats >= 1 && beats % 1 === 0.5,  // 1.5 拍 = 附点四分
+      flag: beats <= 0.5                        // 0.5 拍 = 八分（带符尾）
+    };
+  },
+
+  /** 音高 → 谱表纵坐标：以 E4 为第 1 线（最下），每音级上移半线间距 */
+  _noteY(midi, bottomY) {
+    return bottomY - (this._diatonic(midi) - 30) * (this.GAP / 2);
+  },
+
+  /** 需要绘制的加线纵坐标（谱表下方/上方的延伸线） */
+  _ledgerYs(y, topY, bottomY) {
+    const g = this.GAP, ys = [];
+    if (y > bottomY + 0.1) for (let k = 1; bottomY + k * g <= y + 0.1; k++) ys.push(bottomY + k * g);
+    if (y < topY - 0.1) for (let k = 1; topY - k * g >= y - 0.1; k++) ys.push(topY - k * g);
+    return ys;
+  },
+
+  /**
+   * 主绘制入口（每帧调用）
+   * @param {number} songTime 当前乐曲时间（可为负=倒计时）
+   * @param {Array} notes buildTimeline 产出的音符数组（含状态）
+   * @param {string} phase 练习阶段 idle/countdown/practicing/paused/finished
+   */
+  draw(songTime, notes, phase) {
+    const c = this.ctx2d, W = this.W, H = this.H, C = this.COLORS, g = this.GAP;
+    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    c.fillStyle = C.bg; c.fillRect(0, 0, W, H);
+
+    // 谱表几何：topY = 第 5 线（最上），bottomY = 第 1 线（最下，即 E4）
+    const centerY = H * 0.50;
+    const topY = centerY - 2 * g, bottomY = centerY + 2 * g;
+    const playheadX = W * this.PLAYHEAD_RATIO;
+    const secPerBeat = 60 / App.bpm;
+    const secPerMeasure = ScoreData.timeSignature * secPerBeat;
+    const totalSec = App.totalSec || 0;
+
+    // ---------- 1. 五条谱线（贯穿画布，谱头区也保留） ----------
+    c.strokeStyle = C.staff; c.lineWidth = 1;
+    for (let i = 0; i < 5; i++) {
+      const y = Math.round(topY + i * g) + 0.5;
+      c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke();
+    }
+
+    // 乐谱内容裁剪：左侧谱头区（谱号/拍号）不绘制乐谱
+    c.save();
+    c.beginPath(); c.rect(this.GUTTER_W, 0, W - this.GUTTER_W, H); c.clip();
+
+    // ---------- 2. 小节线 + 小节号 + 终止线 ----------
+    c.strokeStyle = C.barline; c.lineWidth = 1;
+    c.font = "9px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+    let mIdx = 0;
+    for (let t = 0; t <= totalSec + 0.001; t += secPerMeasure, mIdx++) {
+      const x = Math.round(playheadX + (t - songTime) * this.PX_PER_SEC) + 0.5;
+      if (x < this.GUTTER_W - 40 || x > W + 40) continue;
+      c.beginPath(); c.moveTo(x, topY); c.lineTo(x, bottomY); c.stroke();
+      c.fillStyle = C.measure;
+      c.fillText(String(mIdx + 1), x + 9, bottomY + g * 2.6);      // 小节号
+    }
+    // 终止线：细 + 粗双竖线
+    const endX = playheadX + (totalSec - songTime) * this.PX_PER_SEC;
+    if (endX > this.GUTTER_W - 40 && endX < W + 40) {
+      c.strokeStyle = C.barline; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(endX, topY); c.lineTo(endX, bottomY); c.stroke();
+      c.lineWidth = 4;
+      c.beginPath(); c.moveTo(endX + 6, topY); c.lineTo(endX + 6, bottomY); c.stroke();
+    }
+
+    // ---------- 3. 加线（下加线 / 上加线） ----------
+    c.strokeStyle = C.barline; c.lineWidth = 1;
+    for (const n of notes) {
+      const x = playheadX + (n.startSec - songTime) * this.PX_PER_SEC;
+      if (x < this.GUTTER_W - 20 || x > W + 20) continue;
+      const y = this._noteY(n.midi, bottomY);
+      for (const ly of this._ledgerYs(y, topY, bottomY)) {
+        c.beginPath(); c.moveTo(x - 13, Math.round(ly) + 0.5); c.lineTo(x + 13, Math.round(ly) + 0.5); c.stroke();
+      }
+    }
+
+    // ---------- 4. 音符 ----------
+    for (const n of notes) {
+      const x = playheadX + (n.startSec - songTime) * this.PX_PER_SEC;
+      if (x < this.GUTTER_W - 20 || x > W + 20) continue;
+      this._drawNote(n, x, songTime, phase, bottomY);
+    }
+    c.restore();                       // 解除乐谱区裁剪
+
+    // ---------- 5. 谱头区：高音谱号 + 拍号 + 节拍指示灯 ----------
+    this._drawClefAndMeter(c, centerY, bottomY, songTime, secPerBeat, phase, totalSec);
+
+    // ---------- 6. 播放线（含顶部三角标） ----------
+    c.strokeStyle = C.playhead; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(playheadX, 8); c.lineTo(playheadX, H - 8); c.stroke();
+    c.fillStyle = C.playhead;
+    c.beginPath(); c.moveTo(playheadX - 6, 0); c.lineTo(playheadX + 6, 0); c.lineTo(playheadX, 8); c.closePath(); c.fill();
+
+    // ---------- 7. 倒计时 / 暂停遮罩 ----------
+    if (phase === "countdown" && songTime < 0) {
+      c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillStyle = "#2f6fed";
+      c.font = "800 64px -apple-system, sans-serif";
+      c.fillText(String(Math.ceil(-songTime)), W / 2, H / 2 - 6);
+      c.fillStyle = "#8aa3d8";
+      c.font = "13px sans-serif";
+      c.fillText("准备演奏…", W / 2, H / 2 + 34);
+    }
+    if (phase === "paused") {
+      c.fillStyle = "rgba(255,255,255,.6)"; c.fillRect(0, 0, W, H);
+      c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillStyle = "#666"; c.font = "700 22px sans-serif";
+      c.fillText("已暂停", W / 2, H / 2);
+    }
+  },
+
+  /**
+   * 绘制单个音符符号：符头 + 符干 + 符尾 + 附点 + 音名标签
+   * @param {object} n  buildTimeline 音符（含 matched / detectedWrong / done / correct 状态）
+   * @param {number} x  符头横坐标
+   * @param {number} bottomY 第 1 线纵坐标
+   */
+  _drawNote(n, x, songTime, phase, bottomY) {
+    const c = this.ctx2d, C = this.COLORS, g = this.GAP;
+    const y = this._noteY(n.midi, bottomY);
+    const diat = this._diatonic(n.midi);
+    const st = this._noteStyle(n.beats);
+
+    // 状态 → 墨色：待演奏=黑 / 正确=绿 / 错误=红
+    let ink = C.ink;
+    if (n.done) ink = n.correct ? C.correct : C.wrong;
+    else if (n.matched) ink = C.correct;
+    else if (n.detectedWrong) ink = C.wrong;
+
+    // 正在演奏的音符：橙色光晕
+    if (phase === "practicing" && !n.done && songTime >= n.startSec && songTime < n.endSec) {
+      c.fillStyle = "rgba(245,166,35,.20)";
+      this._roundRect(x - 15, y - 17, 30, 34, 9); c.fill();
+    }
+
+    // 符头：右倾椭圆（二分音符为空心）
+    const rx = g * 0.62, ry = g * 0.44;
+    c.save();
+    c.translate(x, y); c.rotate(-0.35);
+    c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    if (st.filled) { c.fillStyle = ink; c.fill(); }
+    else { c.fillStyle = C.bg; c.fill(); c.strokeStyle = ink; c.lineWidth = 1.8; c.stroke(); }
+    c.restore();
+
+    // 符干：中间线（B4，音级 34）以下朝上，其以上朝下
+    const up = diat < 34;
+    const sx = x + (up ? rx * 0.85 : -rx * 0.85);
+    const sy1 = up ? y - this.STEM_LEN : y + this.STEM_LEN;
+    c.strokeStyle = ink; c.lineWidth = 1.7;
+    c.beginPath(); c.moveTo(sx, y); c.lineTo(sx, sy1); c.stroke();
+
+    // 符尾（八分音符）
+    if (st.flag) {
+      c.fillStyle = ink;
+      c.beginPath(); c.moveTo(sx, sy1);
+      if (up) {
+        c.quadraticCurveTo(sx + 12, sy1 + 9, sx + 2, sy1 + 26);
+        c.quadraticCurveTo(sx + 6, sy1 + 12, sx, sy1);
+      } else {
+        c.quadraticCurveTo(sx - 12, sy1 - 9, sx - 2, sy1 - 26);
+        c.quadraticCurveTo(sx - 6, sy1 - 12, sx, sy1);
+      }
+      c.closePath(); c.fill();
+    }
+
+    // 附点：符头右侧；音符落在谱线上时上移半间距
+    if (st.dotted) {
+      const onLine = Math.abs(diat - 30) % 2 === 0;      // 音级差为偶数 → 落在谱线上
+      c.fillStyle = ink;
+      c.beginPath(); c.arc(x + rx + 8, y + (onLine ? -g / 2 : 0), 2.6, 0, Math.PI * 2); c.fill();
+    }
+
+    // 音名标签（白色描边，避免与谱线混淆）
+    c.font = "9px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+    const labelY = y + 20;
+    c.lineWidth = 3; c.strokeStyle = C.bg; c.strokeText(n.pitch, x, labelY);
+    c.fillStyle = (n.done || n.matched) ? C.labelOn : C.label;
+    c.fillText(n.pitch, x, labelY);
+  },
+
+  /** 谱头区：高音谱号 + 4/4 拍号 + 节拍指示灯（随当前拍脉冲高亮） */
+  _drawClefAndMeter(c, centerY, bottomY, songTime, secPerBeat, phase, totalSec) {
+    const C = this.COLORS, g = this.GAP;
+    const tsX = this.GUTTER_W - 22;                    // 拍号中心横坐标
+
+    // 高音谱号：优先用 Unicode 音乐符号 𝄞，字体缺字形时回退手绘路径
+    c.font = `${g * 4.6}px "Segoe UI Symbol","Apple Symbols","Noto Music",serif`;
+    c.textAlign = "left"; c.textBaseline = "middle";
+    if (this._hasGlyph(c, "\u{1D11E}")) {
+      c.fillStyle = C.ink;
+      c.fillText("\u{1D11E}", 8, centerY + g * 0.6);
+    } else {
+      this._drawClefPath(c, 26, centerY, g);
+    }
+
+    // 拍号：分子（每小节拍数）/ 分母（以几分音符为一拍）上下排列
+    c.fillStyle = C.ink;
+    c.font = `700 ${Math.round(g * 1.9)}px Georgia,"Times New Roman",serif`;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(String(ScoreData.timeSignature), tsX, centerY - g * 0.95);
+    c.fillText(String(ScoreData.beatUnit), tsX, centerY + g * 0.95);
+
+    // 节拍指示灯：每小节拍数对应的圆点，当前拍高亮
+    const beats = ScoreData.timeSignature;
+    let cur = -1;
+    if (phase === "practicing" && songTime >= 0 && songTime <= totalSec) {
+      cur = Math.floor(songTime / secPerBeat) % beats;
+    }
+    const dotY = bottomY + g * 2.6;
+    for (let i = 0; i < beats; i++) {
+      c.beginPath();
+      c.arc(tsX - 12 + i * 8, dotY, i === cur ? 3.4 : 2.2, 0, Math.PI * 2);
+      c.fillStyle = i === cur ? C.active : "#d5dae3";
+      c.fill();
+    }
+  },
+
+  /** 检测当前字体是否含指定字形：与「豆腐块」宽度对比 */
+  _hasGlyph(c, ch) {
+    const tofu = c.measureText("\uFFFF").width;
+    const w = c.measureText(ch).width;
+    return w > 0 && Math.abs(w - tofu) > 0.5;
+  },
+
+  /** 回退方案：手绘高音谱号（贝塞尔近似），cx 为谱号中心横坐标 */
+  _drawClefPath(c, cx, centerY, g) {
+    c.strokeStyle = this.COLORS.ink;
+    c.lineWidth = g * 0.34; c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(cx, centerY + g * 2.6);                                    // 底部尾钩
+    c.quadraticCurveTo(cx - g * 1.7, centerY + g * 1.2, cx - g * 0.9, centerY - g * 0.9);
+    c.quadraticCurveTo(cx + g * 0.1, centerY - g * 3.0, cx + g * 1.1, centerY - g * 1.0);
+    c.quadraticCurveTo(cx + g * 1.7, centerY + g * 1.4, cx + g * 0.2, centerY + g * 1.2);
+    c.quadraticCurveTo(cx - g * 1.2, centerY + g * 0.4, cx + g * 0.1, centerY + g * 1.6);
+    c.stroke();
+    c.lineCap = "butt";
+  },
+
+  _roundRect(x, y, w, h, r) {
+    const c = this.ctx2d;
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+};
+
+/* =====================================================================
+ * 模块5：时序比对、音符着色业务逻辑 CompareEngine
+ * 音符状态机：PENDING → (窗口内) → CORRECT(绿) / WRONG(红)
+ *   - 窗口内检测到匹配音高（|音分偏差| ≤ 容差）→ 变绿（可红转绿）
+ *   - 窗口内检测到别的音高 → 变红
+ *   - 窗口结束仍无匹配 → 红（漏吹）
+ * ===================================================================== */
+const CompareEngine = {
+  notes: [], tolerance: 50, octaveFree: false,
+
+  reset(notes, tolerance, octaveFree) {
+    this.notes = notes; this.tolerance = tolerance; this.octaveFree = octaveFree;
+    notes.forEach(n => { n.matched = false; n.detectedWrong = false; n.done = false; n.correct = false; });
+  },
+
+  /**
+   * 每个有效音频帧调用一次（音频速率，约 21 次/秒）
+   * @param {number} songTime 乐曲时间
+   * @param {object|null} p PitchDetector 输出 {midi, cents} 或 null（无声/无效）
+   */
+  update(songTime, p) {
+    if (songTime < 0 || !p) return;
+    for (const n of this.notes) {
+      if (songTime >= n.startSec && songTime < n.endSec && !n.done) {
+        const diff = this._centsDiff(p, n);
+        if (Math.abs(diff) <= this.tolerance) n.matched = true;      // 命中 → 绿
+        else n.detectedWrong = true;                                  // 别的音 → 红
+      }
+    }
+  },
+
+  /** 音符窗口结束时收尾判定：无匹配 → 漏吹红 */
+  finalizeUpTo(songTime) {
+    for (const n of this.notes) {
+      if (!n.done && songTime >= n.endSec) {
+        n.done = true;
+        n.correct = n.matched;   // 有命中即绿，否则红
+      }
+    }
+  },
+
+  /** 计算检测音相对目标音的音分差（支持忽略八度） */
+  _centsDiff(p, n) {
+    const detCents = (p.midi + p.cents / 100) * 100;   // 检测音的精确音分位置
+    const tgtCents = n.midi * 100;
+    let d = detCents - tgtCents;
+    if (this.octaveFree) {
+      d = ((d % 1200) + 1200) % 1200;    // 归一到 0~1200
+      if (d > 600) d -= 1200;            // 归一到 -600~600
+    }
+    return d;
+  },
+
+  /** 实时正确率：已判定音符中绿音占比 */
+  accuracy() {
+    const finished = this.notes.filter(n => n.done);
+    if (finished.length === 0) return null;
+    return finished.filter(n => n.correct).length / finished.length * 100;
+  },
+  summary() {
+    const total = this.notes.length;
+    const hit = this.notes.filter(n => n.correct).length;
+    return { hit, total, acc: total ? hit / total * 100 : 0 };
+  }
+};
+
+/* =====================================================================
+ * 模块7：localStorage 练习统计 StatsStorage
+ * 每条记录 {t, bpm, tol, acc, hit, total}，展示最近 5 次。
+ * ===================================================================== */
+const StatsStorage = {
+  KEY: "score_practice_records",
+  save(rec) {
+    try {
+      const list = JSON.parse(localStorage.getItem(this.KEY) || "[]");
+      list.unshift(rec);
+      localStorage.setItem(this.KEY, JSON.stringify(list.slice(0, 50)));
+      this.render();
+    } catch (e) { /* 隐私模式等场景存不了就跳过 */ }
+  },
+  render() {
+    const el = document.getElementById("recList");
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem(this.KEY) || "[]"); } catch (e) {}
+    if (!list.length) { el.innerHTML = '<div class="rec-empty">暂无记录，完成一次练习后自动保存</div>'; return; }
+    el.innerHTML = list.slice(0, 5).map(r => {
+      const d = new Date(r.t);
+      const pad = x => String(x).padStart(2, "0");
+      const time = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const color = r.acc >= 80 ? "#2e9e5b" : r.acc >= 50 ? "#d08a2e" : "#d0453c";
+      return `<div class="rec-item"><span>${time}</span><span>BPM ${r.bpm}</span><span>±${r.tol}音分</span><b style="color:${color}">${r.acc.toFixed(0)}% (${r.hit}/${r.total})</b></div>`;
+    }).join("");
+  },
+  clear() { localStorage.removeItem(this.KEY); this.render(); }
+};
+
+/* =====================================================================
+ * 主控制器 App：状态机 + rAF 循环 + 各模块粘合
+ * 状态：idle → countdown → practicing ⇄ paused → finished
+ * ===================================================================== */
+const App = {
+  state: "idle",              // idle | countdown | practicing | paused | finished
+  bpm: 100, tolerance: 50, octaveFree: false,
+  notes: [], totalSec: 0,
+  startTime: 0,               // 乐曲 0 时刻对应的 AudioContext 时间（含倒计时）
+  pausedAt: 0,
+  COUNTDOWN: 3,               // 开演倒计时秒数
+  lastResult: null,           // 最近一次有效检测结果（供展示）
+  resultTimer: 0,
+
+  /* ---------- 生命周期 ---------- */
+  init() {
+    ScoreRenderer.init(document.getElementById("score"));
+    this.readControls();
+    this.bindControls();
+    StatsStorage.render();
+    this.notes = buildTimeline(this.bpm);
+    this.totalSec = this.notes[this.notes.length - 1].endSec;   // 供待机态渲染完整谱面
+    CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
+    requestAnimationFrame(() => this.tick());
+  },
+
+  readControls() {
+    this.bpm = +document.getElementById("sliderBpm").value;
+    this.tolerance = +document.getElementById("sliderTol").value;
+    this.octaveFree = document.getElementById("chkOctave").checked;
+  },
+
+  bindControls() {
+    const bpmEl = document.getElementById("sliderBpm");
+    const tolEl = document.getElementById("sliderTol");
+    bpmEl.addEventListener("input", () => {
+      this.bpm = +bpmEl.value;
+      document.getElementById("valBpm").textContent = this.bpm;
+      if (this.state === "idle") {           // 仅待机时允许变速重排
+        this.notes = buildTimeline(this.bpm);
+        this.totalSec = this.notes[this.notes.length - 1].endSec;
+        CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
+      }
+    });
+    tolEl.addEventListener("input", () => {
+      this.tolerance = +tolEl.value;
+      document.getElementById("valTol").textContent = `±${this.tolerance} 音分`;
+    });
+    document.getElementById("chkOctave").addEventListener("change", e => {
+      this.octaveFree = e.target.checked;
+      CompareEngine.octaveFree = this.octaveFree;
+    });
+  },
+
+  /** 主按钮：根据状态切换 开始/暂停/继续 */
+  async onMainButton() {
+    if (this.state === "idle" || this.state === "finished") {
+      await this.start();
+    } else if (this.state === "practicing") {
+      this.pause();
+    } else if (this.state === "paused") {
+      this.resume();
+    }
+  },
+
+  /** 开始练习：初始化麦克风 → 重置乐谱 → 进入倒计时 */
+  async start() {
+    this.setStatus("");
+    if (!AudioCapture.running) {
+      this.setStatus("正在请求麦克风权限…");
+      try { await AudioCapture.init(); }
+      catch (e) { this.setStatus("麦克风授权失败：" + e.message + "（需 HTTPS/localhost）"); return; }
+      this.setStatus("");
+    }
+    this.readControls();
+    this.notes = buildTimeline(this.bpm);
+    CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
+    this.totalSec = this.notes[this.notes.length - 1].endSec;
+    CompareEngine.octaveFree = this.octaveFree; CompareEngine.tolerance = this.tolerance;
+    document.getElementById("resultOverlay").style.display = "none";
+    this.startTime = AudioCapture.now + this.COUNTDOWN;
+    this.state = "countdown";
+    this._requestWakeLock();          // 练习期间保持屏幕常亮
+    this._syncButtons();
+  },
+
+  pause() {
+    if (this.state !== "practicing" && this.state !== "countdown") return;
+    this.pausedAt = AudioCapture.now;
+    this.state = "paused";
+    this._releaseWakeLock();          // 暂停时允许锁屏
+    this._syncButtons();
+  },
+  resume() {
+    if (this.state !== "paused") return;
+    this.startTime += AudioCapture.now - this.pausedAt;   // 平移时间轴
+    this.state = this._songTime() < 0 ? "countdown" : "practicing";
+    this._syncButtons();
+  },
+  retry() {
+    if (this.state === "idle") return;
+    this.state = "idle";
+    this.start();
+  },
+
+  /* ---------- 音频回调入口（AudioCapture 每帧调用） ---------- */
+  onPitch(result, rms, clipped) {
+    // 实时面板：显示最近一次有效检测结果
+    if (result) {
+      this.lastResult = result;
+      this.resultTimer = performance.now() + 400;   // 400ms 无新结果则清空显示
+    }
+    // 比对引擎只在练习中消费检测结果
+    if (this.state === "practicing") {
+      CompareEngine.update(this._songTime(), result);
+    }
+  },
+
+  /* ---------- 每帧驱动 ---------- */
+  tick() {
+    const st = this._songTime();
+
+    // 倒计时结束 → 进入练习
+    if (this.state === "countdown" && st >= 0) this.state = "practicing";
+
+    // 练习中：收尾超时音符；曲终结算
+    if (this.state === "practicing") {
+      CompareEngine.finalizeUpTo(st);
+      if (st > this.totalSec + 0.6) this._finish();
+    }
+
+    // 绘制
+    ScoreRenderer.draw(st, this.notes, this.state);
+    this._updateRealtime();
+    requestAnimationFrame(() => this.tick());
+  },
+
+  _songTime() {
+    if (this.state === "idle") return 0;
+    if (this.state === "paused") return this.pausedAt - this.startTime;
+    return AudioCapture.now - this.startTime;
+  },
+
+  _finish() {
+    this.state = "finished";
+    this._releaseWakeLock();          // 曲终允许锁屏
+    const s = CompareEngine.summary();
+    // 存档
+    StatsStorage.save({
+      t: Date.now(), bpm: this.bpm, tol: this.tolerance,
+      acc: s.acc, hit: s.hit, total: s.total
+    });
+    // 结果浮层
+    document.getElementById("resultAcc").textContent = s.acc.toFixed(0) + "%";
+    document.getElementById("resultAcc").style.color = s.acc >= 80 ? "#2e9e5b" : s.acc >= 50 ? "#d08a2e" : "#d0453c";
+    document.getElementById("resultDetail").textContent = `命中 ${s.hit}/${s.total} 个音符 · BPM ${this.bpm} · 容错±${this.tolerance}音分`;
+    document.getElementById("resultOverlay").style.display = "flex";
+    this._syncButtons();
+  },
+
+  /* ---------- UI 刷新 ---------- */
+  _updateRealtime() {
+    // 音名 / 频率（400ms 无有效结果回落为 —）
+    const noteEl = document.getElementById("rtNote");
+    const freqEl = document.getElementById("rtFreq");
+    if (this.lastResult && performance.now() < this.resultTimer) {
+      const r = this.lastResult;
+      noteEl.textContent = r.name;
+      noteEl.style.color = "#333";
+      freqEl.innerHTML = r.freq.toFixed(1) + `<small>Hz</small>`;
+    } else {
+      noteEl.textContent = "—"; noteEl.style.color = "#bbb";
+      freqEl.innerHTML = "—<small>Hz</small>";
+    }
+    // 正确率
+    const acc = CompareEngine.accuracy();
+    const accEl = document.getElementById("rtAcc");
+    const accBox = document.getElementById("accBox");
+    if (acc === null) {
+      accEl.innerHTML = "--<small>%</small>"; accBox.className = "stat-box";
+    } else {
+      accEl.innerHTML = acc.toFixed(0) + "<small>%</small>";
+      accBox.className = "stat-box " + (acc >= 80 ? "correct" : acc >= 50 ? "" : "wrong");
+    }
+  },
+
+  _syncButtons() {
+    const main = document.getElementById("btnMain");
+    const retry = document.getElementById("btnRetry");
+    main.textContent = { idle: "开始练习", countdown: "暂停", practicing: "暂停", paused: "继续", finished: "开始练习" }[this.state];
+    retry.disabled = this.state === "idle";
+    // 练习中锁定滑块，避免时间轴错乱
+    document.getElementById("sliderBpm").disabled = this.state !== "idle";
+  },
+
+  setStatus(msg) { document.getElementById("statusHint").textContent = msg; },
+
+  /* ---------- PWA：屏幕常亮（Wake Lock） ----------
+   * 练习期间申请屏幕常亮防止手机自动锁屏；不支持该 API 的环境静默跳过。
+   * 手机回前台时浏览器会自动释放锁，需重新申请。 */
+  _wakeLock: null,
+  async _requestWakeLock() {
+    try {
+      if ("wakeLock" in navigator) this._wakeLock = await navigator.wakeLock.request("screen");
+    } catch (e) { /* 用户拒绝或系统不支持 → 忽略 */ }
+  },
+  _releaseWakeLock() {
+    try { if (this._wakeLock) this._wakeLock.release(); } catch (e) {}
+    this._wakeLock = null;
+  }
+};
+
+/* 启动 */
+App.init();
+
+/* ---------- PWA：Service Worker 注册 ----------
+ * 仅在 HTTPS 或 localhost 下可用（file:// 打开会静默跳过，不影响直接运行） */
+if ("serviceWorker" in navigator &&
+    (location.protocol === "https:" || location.hostname === "localhost")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+
+/* ---------- 手机前后台切换处理 ----------
+ * 回到前台：恢复被系统挂起的 AudioContext，练习中则重新申请屏幕常亮 */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (AudioCapture.ctx && AudioCapture.ctx.state === "suspended") AudioCapture.ctx.resume();
+  if (App.state === "practicing" || App.state === "countdown") App._requestWakeLock();
+});
+</script>
+</body>
+</html>

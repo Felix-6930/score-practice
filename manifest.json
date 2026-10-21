@@ -1,0 +1,15 @@
+{
+  "name": "实时识谱练习",
+  "short_name": "识谱练习",
+  "description": "单音乐器实时识谱练习：五线谱卡拉OK式跟练、YIN 实时音高判定与正确率统计",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fdfdfd",
+  "theme_color": "#2f6fed",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
