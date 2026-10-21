@@ -32,6 +32,12 @@
              calc(24px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
   }
   h1 { font-size: 18px; text-align: center; }
+  #topbar { position: relative; margin-bottom: 2px; }
+  #selSong {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 108px; padding: 6px 4px; font-size: 12px;
+    border: 1px solid #d8dee8; border-radius: 8px; background: #fff; color: #333;
+  }
   .subtitle { font-size: 11px; color: #999; text-align: center; margin: 4px 0 10px; }
 
   /* 实时数据面板 */
@@ -96,18 +102,18 @@
 </head>
 <body>
 <div id="app">
-  <h1>实时识谱练习</h1>
-  <div class="subtitle">口琴（10孔C调）· 孔位标注 · 五线谱《欢乐颂》</div>
+  <!-- 顶部栏：左上角选曲 + 居中标题 -->
+  <div id="topbar">
+    <select id="selSong" title="更换乐谱"></select>
+    <h1>实时识谱练习</h1>
+  </div>
+  <div class="subtitle" id="subtitle">口琴（10孔C调）· 孔位标注 · 五线谱《欢乐颂》</div>
 
   <!-- 实时数据面板 -->
   <div id="realtime">
     <div class="stat-box">
       <div class="label">识别音名</div>
       <div class="value" id="rtNote">—</div>
-    </div>
-    <div class="stat-box">
-      <div class="label">口琴孔位</div>
-      <div class="value" id="rtHole">—</div>
     </div>
     <div class="stat-box" id="accBox">
       <div class="label">正确率</div>
@@ -170,36 +176,113 @@
 <script>
 "use strict";
 /* =====================================================================
- * 模块1：乐谱数据模块 ScoreData
- * 乐谱音符时序数据（供五线谱渲染使用）。pitch 为科学音名（如 E4），beats 为拍数。
- * startSec / endSec 由 buildTimeline() 按 BPM 实时计算，改速度即整体重排。
+ * 模块1：乐谱库 SongLibrary
+ * 每首歌：{id, name, timeSignature, beatUnit, defaultBPM, notes[]}
+ * 所有曲目均已转调/移高，确保落在 10孔C调布鲁斯口琴的自然音范围内。
  * ===================================================================== */
-const ScoreData = {
-  name: "欢乐颂 (Ode to Joy)",
-  timeSignature: 4,          // 每小节拍数（拍号分子）
-  beatUnit: 4,               // 以四分音符为一拍（拍号分母）
-  defaultBPM: 100,
-  // 《欢乐颂》C 调片段：8 小节，覆盖四分 / 八分 / 附点四分 / 二分四种时值
-  // 已整体移高八度（E5~G5）：10孔C调布鲁斯口琴低音区没有 F4/A4（需压音），
-  // 移高后全部落在 4~8 孔自然音：C5=4吹 D5=4吸 E5=5吹 F5=5吸 G5=6吹
-  // beats 含义：1=四分  0.5=八分  1.5=附点四分  2=二分
-  notes: [
-    { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
-    { pitch: "F5", beats: 1 }, { pitch: "G5", beats: 1 },
-    { pitch: "G5", beats: 1 }, { pitch: "F5", beats: 1 },
-    { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
-    { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
-    { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
-    { pitch: "E5", beats: 1.5 }, { pitch: "D5", beats: 0.5 }, { pitch: "D5", beats: 2 },
-    { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
-    { pitch: "F5", beats: 1 }, { pitch: "G5", beats: 1 },
-    { pitch: "G5", beats: 1 }, { pitch: "F5", beats: 1 },
-    { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
-    { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
-    { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
-    { pitch: "D5", beats: 1.5 }, { pitch: "C5", beats: 0.5 }, { pitch: "C5", beats: 2 },
-  ]
-};
+const SongLibrary = [
+  {
+    id: "ode", name: "欢乐颂", timeSignature: 4, beatUnit: 4, defaultBPM: 100,
+    // 《欢乐颂》C 调片段：8 小节，覆盖四分 / 八分 / 附点四分 / 二分四种时值
+    // 移高八度（E5~G5）：C5=4吹 D5=4吸 E5=5吹 F5=5吸 G5=6吹
+    notes: [
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "F5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "G5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "E5", beats: 1.5 }, { pitch: "D5", beats: 0.5 }, { pitch: "D5", beats: 2 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "F5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "G5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 1.5 }, { pitch: "C5", beats: 0.5 }, { pitch: "C5", beats: 2 },
+    ]
+  },
+  {
+    id: "twinkle", name: "小星星", timeSignature: 4, beatUnit: 4, defaultBPM: 96,
+    // 小星星：C5~A5，全部自然音（C5=4吹 D5=4吸 E5=5吹 F5=5吸 G5=6吹 A5=6吸）
+    notes: [
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "A5", beats: 1 }, { pitch: "A5", beats: 1 },
+      { pitch: "G5", beats: 2 },
+      { pitch: "F5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 2 },
+      { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "F5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 2 },
+      { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "F5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 2 },
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "A5", beats: 1 }, { pitch: "A5", beats: 1 },
+      { pitch: "G5", beats: 2 },
+      { pitch: "F5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 2 },
+    ]
+  },
+  {
+    id: "tiger", name: "两只老虎", timeSignature: 4, beatUnit: 4, defaultBPM: 104,
+    // 两只老虎：G4~A5，全部自然音（G4=3吹 C5=4吹 D5=4吸 E5=5吹 F5=5吸 G5=6吹 A5=6吸）
+    notes: [
+      { pitch: "C5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "G5", beats: 2 },
+      { pitch: "E5", beats: 1 }, { pitch: "F5", beats: 1 },
+      { pitch: "G5", beats: 2 },
+      { pitch: "G5", beats: 0.5 }, { pitch: "A5", beats: 0.5 },
+      { pitch: "G5", beats: 0.5 }, { pitch: "F5", beats: 0.5 },
+      { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "G5", beats: 0.5 }, { pitch: "A5", beats: 0.5 },
+      { pitch: "G5", beats: 0.5 }, { pitch: "F5", beats: 0.5 },
+      { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "G4", beats: 1 },
+      { pitch: "C5", beats: 2 },
+      { pitch: "D5", beats: 1 }, { pitch: "G4", beats: 1 },
+      { pitch: "C5", beats: 2 },
+    ]
+  },
+  {
+    id: "firefly", name: "虫儿飞", timeSignature: 4, beatUnit: 4, defaultBPM: 88,
+    // 虫儿飞（简化版）：C6 调，全部自然音
+    // 注：此旋律为常见简化改编，如有出入请告知校正
+    notes: [
+      { pitch: "E6", beats: 1 }, { pitch: "D6", beats: 1 },
+      { pitch: "C6", beats: 2 },
+      { pitch: "E6", beats: 1 }, { pitch: "D6", beats: 1 },
+      { pitch: "C6", beats: 2 },
+      { pitch: "E6", beats: 1 }, { pitch: "E6", beats: 1 },
+      { pitch: "F6", beats: 1 }, { pitch: "G6", beats: 1 },
+      { pitch: "G6", beats: 2 }, { pitch: "F6", beats: 1 }, { pitch: "E6", beats: 1 },
+      { pitch: "D6", beats: 2 }, { pitch: "C6", beats: 2 },
+      { pitch: "A5", beats: 1 }, { pitch: "C6", beats: 1 },
+      { pitch: "D6", beats: 2 },
+      { pitch: "E6", beats: 1 }, { pitch: "D6", beats: 1 },
+      { pitch: "C6", beats: 2 },
+      { pitch: "A5", beats: 1 }, { pitch: "C6", beats: 1 },
+      { pitch: "D6", beats: 2 },
+      { pitch: "E6", beats: 1 }, { pitch: "D6", beats: 1 },
+      { pitch: "C6", beats: 2 },
+    ]
+  }
+];
+
+/* 当前激活的乐谱（默认第一首） */
+let ScoreData = SongLibrary[0];
 
 /* 音名 → MIDI 编号（C4=60），供频率比对与谱表定位使用 */
 function pitchToMidi(pitch) {
@@ -846,11 +929,49 @@ const App = {
     ScoreRenderer.init(document.getElementById("score"));
     this.readControls();
     this.bindControls();
+    this.populateSongSelect();
     StatsStorage.render();
     this.notes = buildTimeline(this.bpm);
-    this.totalSec = this.notes[this.notes.length - 1].endSec;   // 供待机态渲染完整谱面
+    this.totalSec = this.notes[this.notes.length - 1].endSec;
     CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
+    this._updateSubtitle();
     requestAnimationFrame(() => this.tick());
+  },
+
+  /** 填充左上角乐谱下拉框 */
+  populateSongSelect() {
+    const sel = document.getElementById("selSong");
+    sel.innerHTML = "";
+    for (const s of SongLibrary) {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      opt.textContent = s.name;
+      sel.appendChild(opt);
+    }
+    sel.value = ScoreData.id;
+  },
+
+  /** 切换乐谱：仅待机/结束状态允许，切换后重置到 idle */
+  switchSong(id) {
+    if (this.state === "practicing" || this.state === "countdown" || this.state === "paused") return;
+    const song = SongLibrary.find(s => s.id === id);
+    if (!song || song.id === ScoreData.id) return;
+    ScoreData = song;
+    this.bpm = song.defaultBPM;
+    document.getElementById("sliderBpm").value = this.bpm;
+    document.getElementById("valBpm").textContent = this.bpm;
+    this.notes = buildTimeline(this.bpm);
+    this.totalSec = this.notes[this.notes.length - 1].endSec;
+    CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
+    this.state = "idle";
+    document.getElementById("resultOverlay").style.display = "none";
+    this._updateSubtitle();
+    this._syncButtons();
+  },
+
+  _updateSubtitle() {
+    document.getElementById("subtitle").textContent =
+      `口琴（10孔C调）· 孔位标注 · 五线谱《${ScoreData.name}》`;
   },
 
   readControls() {
@@ -891,6 +1012,10 @@ const App = {
     instEl.addEventListener("change", e => {
       this.instrumentMode = e.target.value;
       try { localStorage.setItem("score_practice_instrument", this.instrumentMode); } catch (err) {}
+    });
+    // 乐谱切换：仅待机/结束状态响应
+    document.getElementById("selSong").addEventListener("change", e => {
+      this.switchSong(e.target.value);
     });
   },
 
@@ -1002,19 +1127,13 @@ const App = {
 
   /* ---------- UI 刷新 ---------- */
   _updateRealtime() {
-    // 识别音名 / 口琴孔位（400ms 无有效结果回落为 —）
+    // 识别音名（400ms 无有效结果回落为 —）
     const noteEl = document.getElementById("rtNote");
-    const holeEl = document.getElementById("rtHole");
     if (this.lastResult && performance.now() < this.resultTimer) {
-      const r = this.lastResult;
-      noteEl.textContent = r.name;
+      noteEl.textContent = this.lastResult.name;
       noteEl.style.color = "#333";
-      const mark = this.instrumentMode === "harmonica" ? Instruments.HARMONICA_C.mark(r.midi) : null;
-      holeEl.textContent = mark || "—";
-      holeEl.style.color = mark ? "#2f6fed" : "#bbb";
     } else {
       noteEl.textContent = "—"; noteEl.style.color = "#bbb";
-      holeEl.textContent = "—"; holeEl.style.color = "#bbb";
     }
     // 正确率
     const acc = CompareEngine.accuracy();
