@@ -72,6 +72,10 @@
   .slider-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; }
   .slider-row .name { width: 86px; color: #666; flex-shrink: 0; }
   .slider-row input[type=range] { flex: 1; }
+  .slider-row select {
+    flex: 1; padding: 8px 6px; font-size: 14px;
+    border: 1px solid #d8dee8; border-radius: 8px; background: #fff; color: #333;
+  }
   .slider-row .val { width: 74px; text-align: right; font-weight: 700; flex-shrink: 0; }
   .check-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: #666; }
   #statusHint { font-size: 11px; color: #b58a2e; text-align: center; margin-top: 8px; min-height: 14px; }
@@ -93,7 +97,7 @@
 <body>
 <div id="app">
   <h1>实时识谱练习</h1>
-  <div class="subtitle">单音乐器通用（口琴 / 竖笛 / 吉他 / 小提琴 / 人声）· 五线谱《欢乐颂》</div>
+  <div class="subtitle">口琴（10孔C调）· 孔位标注 · 五线谱《欢乐颂》</div>
 
   <!-- 实时数据面板 -->
   <div id="realtime">
@@ -102,8 +106,8 @@
       <div class="value" id="rtNote">—</div>
     </div>
     <div class="stat-box">
-      <div class="label">频率</div>
-      <div class="value" id="rtFreq">—<small>Hz</small></div>
+      <div class="label">口琴孔位</div>
+      <div class="value" id="rtHole">—</div>
     </div>
     <div class="stat-box" id="accBox">
       <div class="label">正确率</div>
@@ -137,6 +141,13 @@
       <input type="range" id="sliderTol" min="10" max="100" step="5" value="50">
       <span class="val" id="valTol">±50 音分</span>
     </div>
+    <div class="slider-row">
+      <span class="name">乐器模式</span>
+      <select id="selInstrument">
+        <option value="harmonica">口琴 · 10孔C调（孔位标注）</option>
+        <option value="generic">通用 · 音名标注</option>
+      </select>
+    </div>
     <div class="check-row">
       <input type="checkbox" id="chkOctave">
       <label for="chkOctave">忽略八度（低音乐器如吉他可关闭八度匹配）</label>
@@ -153,7 +164,7 @@
     <div id="recList"></div>
   </div>
 
-  <div class="foot-note">最小原型：仅支持单音演奏；多音 / 漏气杂音将被判为无效静音。<br>请使用 HTTPS 或 localhost 打开并允许麦克风权限。</div>
+  <div class="foot-note">口琴模式：谱面下方的「5吹 / 4吸」即孔位与吹吸，跟着标注吹奏即可。<br>最小原型：仅支持单音；多音 / 漏气杂音将被判为无效静音。</div>
 </div>
 
 <script>
@@ -169,23 +180,24 @@ const ScoreData = {
   beatUnit: 4,               // 以四分音符为一拍（拍号分母）
   defaultBPM: 100,
   // 《欢乐颂》C 调片段：8 小节，覆盖四分 / 八分 / 附点四分 / 二分四种时值
-  // 音级：E E F G | G F E D | C C D E | E. D D - | E E F G | G F E D | C C D E | D. C C -
+  // 已整体移高八度（E5~G5）：10孔C调布鲁斯口琴低音区没有 F4/A4（需压音），
+  // 移高后全部落在 4~8 孔自然音：C5=4吹 D5=4吸 E5=5吹 F5=5吸 G5=6吹
   // beats 含义：1=四分  0.5=八分  1.5=附点四分  2=二分
   notes: [
-    { pitch: "E4", beats: 1 }, { pitch: "E4", beats: 1 },
-    { pitch: "F4", beats: 1 }, { pitch: "G4", beats: 1 },
-    { pitch: "G4", beats: 1 }, { pitch: "F4", beats: 1 },
-    { pitch: "E4", beats: 1 }, { pitch: "D4", beats: 1 },
-    { pitch: "C4", beats: 1 }, { pitch: "C4", beats: 1 },
-    { pitch: "D4", beats: 1 }, { pitch: "E4", beats: 1 },
-    { pitch: "E4", beats: 1.5 }, { pitch: "D4", beats: 0.5 }, { pitch: "D4", beats: 2 },
-    { pitch: "E4", beats: 1 }, { pitch: "E4", beats: 1 },
-    { pitch: "F4", beats: 1 }, { pitch: "G4", beats: 1 },
-    { pitch: "G4", beats: 1 }, { pitch: "F4", beats: 1 },
-    { pitch: "E4", beats: 1 }, { pitch: "D4", beats: 1 },
-    { pitch: "C4", beats: 1 }, { pitch: "C4", beats: 1 },
-    { pitch: "D4", beats: 1 }, { pitch: "E4", beats: 1 },
-    { pitch: "D4", beats: 1.5 }, { pitch: "C4", beats: 0.5 }, { pitch: "C4", beats: 2 },
+    { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+    { pitch: "F5", beats: 1 }, { pitch: "G5", beats: 1 },
+    { pitch: "G5", beats: 1 }, { pitch: "F5", beats: 1 },
+    { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+    { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
+    { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
+    { pitch: "E5", beats: 1.5 }, { pitch: "D5", beats: 0.5 }, { pitch: "D5", beats: 2 },
+    { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+    { pitch: "F5", beats: 1 }, { pitch: "G5", beats: 1 },
+    { pitch: "G5", beats: 1 }, { pitch: "F5", beats: 1 },
+    { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+    { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 },
+    { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
+    { pitch: "D5", beats: 1.5 }, { pitch: "C5", beats: 0.5 }, { pitch: "C5", beats: 2 },
   ]
 };
 
@@ -197,6 +209,32 @@ function pitchToMidi(pitch) {
 }
 /* MIDI → 频率（A4=440Hz 十二平均律） */
 function midiToFreq(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
+
+/* =====================================================================
+ * 模块9：乐器模式 Instruments
+ * 目前只实装口琴（10孔C调布鲁斯口琴，Richter 标准调音）。
+ * 作用：把 MIDI 音换算成「几孔吹/吸」标注，显示在谱面与实时面板。
+ * ===================================================================== */
+const Instruments = {
+  HARMONICA_C: {
+    name: "口琴 · 10孔C调",
+    // 各孔吹气音（MIDI）：1孔 C4 … 10孔 C7
+    blow: [60, 64, 67, 72, 76, 79, 84, 88, 91, 96],
+    // 各孔吸气音（MIDI）：1孔 D4 … 10孔 A6
+    draw: [62, 67, 71, 74, 77, 81, 83, 86, 89, 93],
+    /**
+     * MIDI → 孔位标注，如 "5吹" / "4吸"；不在口琴音域内返回 null
+     * 同一音可在多孔出现时优先吹气孔（如 G4=3吹 而非 2吸）
+     */
+    mark(midi) {
+      let i = this.blow.indexOf(midi);
+      if (i >= 0) return (i + 1) + "吹";
+      i = this.draw.indexOf(midi);
+      if (i >= 0) return (i + 1) + "吸";
+      return null;
+    }
+  }
+};
 
 /**
  * 按当前 BPM 展开时间轴，并初始化每个音符的比对状态
@@ -419,7 +457,9 @@ const ScoreRenderer = {
 
   /** MIDI → 全音阶位置（C=0 … B=6 逐音级累加），用于把音高映射到谱表纵坐标 */
   _diatonic(midi) {
-    const LETTER = [0, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6];   // 半音→音级，黑键依附其下音级
+    // 半音→音级：C=0 C#=0 D=1 D#=1 E=2 F=3 F#=3 G=4 G#=4 A=5 A#=5 B=6
+    // 黑键依附其对应白键音级；E4=30，正好是五线谱第 1 线
+    const LETTER = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
     return (Math.floor(midi / 12) - 1) * 7 + LETTER[((midi % 12) + 12) % 12];
   },
 
@@ -603,12 +643,21 @@ const ScoreRenderer = {
       c.beginPath(); c.arc(x + rx + 8, y + (onLine ? -g / 2 : 0), 2.6, 0, Math.PI * 2); c.fill();
     }
 
-    // 音名标签（白色描边，避免与谱线混淆）
-    c.font = "9px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
-    const labelY = y + 20;
-    c.lineWidth = 3; c.strokeStyle = C.bg; c.strokeText(n.pitch, x, labelY);
-    c.fillStyle = (n.done || n.matched) ? C.labelOn : C.label;
-    c.fillText(n.pitch, x, labelY);
+    // 标注：口琴模式在谱表下方固定行显示孔位（如 5吹/4吸），通用模式在符头下方显示音名
+    const labelColor = (n.done || n.matched) ? C.labelOn : C.label;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    if (App.instrumentMode === "harmonica") {
+      const mark = Instruments.HARMONICA_C.mark(n.midi) || n.pitch;
+      const tabY = bottomY + g * 1.5;              // 孔位标注行（谱线与小节号之间）
+      c.font = "700 10px sans-serif";
+      c.lineWidth = 3; c.strokeStyle = C.bg; c.strokeText(mark, x, tabY);
+      c.fillStyle = labelColor; c.fillText(mark, x, tabY);
+    } else {
+      c.font = "9px sans-serif";
+      const labelY = y + 20;
+      c.lineWidth = 3; c.strokeStyle = C.bg; c.strokeText(n.pitch, x, labelY);
+      c.fillStyle = labelColor; c.fillText(n.pitch, x, labelY);
+    }
   },
 
   /** 谱头区：高音谱号 + 4/4 拍号 + 节拍指示灯（随当前拍脉冲高亮） */
@@ -784,6 +833,7 @@ const StatsStorage = {
 const App = {
   state: "idle",              // idle | countdown | practicing | paused | finished
   bpm: 100, tolerance: 50, octaveFree: false,
+  instrumentMode: "harmonica",// 乐器模式：harmonica 口琴孔位标注 | generic 通用音名标注
   notes: [], totalSec: 0,
   startTime: 0,               // 乐曲 0 时刻对应的 AudioContext 时间（含倒计时）
   pausedAt: 0,
@@ -828,6 +878,19 @@ const App = {
     document.getElementById("chkOctave").addEventListener("change", e => {
       this.octaveFree = e.target.checked;
       CompareEngine.octaveFree = this.octaveFree;
+    });
+    // 乐器模式：切换谱面标注方式（孔位 / 音名），选择持久化
+    const instEl = document.getElementById("selInstrument");
+    try {
+      const saved = localStorage.getItem("score_practice_instrument");
+      if (saved === "harmonica" || saved === "generic") {
+        this.instrumentMode = saved;
+        instEl.value = saved;
+      }
+    } catch (e) {}
+    instEl.addEventListener("change", e => {
+      this.instrumentMode = e.target.value;
+      try { localStorage.setItem("score_practice_instrument", this.instrumentMode); } catch (err) {}
     });
   },
 
@@ -939,17 +1002,19 @@ const App = {
 
   /* ---------- UI 刷新 ---------- */
   _updateRealtime() {
-    // 音名 / 频率（400ms 无有效结果回落为 —）
+    // 识别音名 / 口琴孔位（400ms 无有效结果回落为 —）
     const noteEl = document.getElementById("rtNote");
-    const freqEl = document.getElementById("rtFreq");
+    const holeEl = document.getElementById("rtHole");
     if (this.lastResult && performance.now() < this.resultTimer) {
       const r = this.lastResult;
       noteEl.textContent = r.name;
       noteEl.style.color = "#333";
-      freqEl.innerHTML = r.freq.toFixed(1) + `<small>Hz</small>`;
+      const mark = this.instrumentMode === "harmonica" ? Instruments.HARMONICA_C.mark(r.midi) : null;
+      holeEl.textContent = mark || "—";
+      holeEl.style.color = mark ? "#2f6fed" : "#bbb";
     } else {
       noteEl.textContent = "—"; noteEl.style.color = "#bbb";
-      freqEl.innerHTML = "—<small>Hz</small>";
+      holeEl.textContent = "—"; holeEl.style.color = "#bbb";
     }
     // 正确率
     const acc = CompareEngine.accuracy();
