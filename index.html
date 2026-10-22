@@ -31,6 +31,9 @@
     padding: calc(12px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
              calc(24px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
   }
+  /* 防止页面内容超出屏幕时 flex 压缩各区块（曾导致画布下半截被裁切） */
+  #app > * { flex-shrink: 0; }
+
   h1 { font-size: 18px; text-align: center; }
   #topbar { position: relative; margin-bottom: 2px; }
   #selSong {
@@ -53,8 +56,11 @@
   #accBox.wrong   { background: #fdeceb; border-color: #f5c6c2; }
 
   /* 画布区 */
-  #canvasWrap { position: relative; border: 1px solid #e3e8f0; border-radius: 12px; overflow: hidden; background: #fdfdfd; }
-  #score { display: block; width: 100%; height: 190px; }
+  #canvasWrap {
+    position: relative; border: 1px solid #e3e8f0; border-radius: 12px;
+    overflow: hidden; background: #fdfdfd;
+  }
+  #score { display: block; width: 100%; height: 200px; }
   #resultOverlay {
     position: absolute; inset: 0; display: none;
     background: rgba(255,255,255,.94); z-index: 5;
@@ -86,11 +92,20 @@
   .check-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: #666; }
   #statusHint { font-size: 11px; color: #b58a2e; text-align: center; margin-top: 8px; min-height: 14px; }
 
-  /* 练习记录 */
+  /* 练习记录（可折叠） */
   #records { margin-top: 16px; border-top: 1px dashed #e0e4ea; padding-top: 10px; }
   #records .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-  #records .head span { font-size: 13px; font-weight: 700; color: #555; }
   #records .head button { flex: none; padding: 4px 10px; font-size: 11px; background: #eef1f6; color: #999; }
+  /* 标题整块可点，箭头指示展开状态 */
+  #recToggle {
+    flex: 1; display: flex; align-items: center; gap: 6px;
+    padding: 4px 0; background: transparent; color: #555;
+    font-size: 13px; font-weight: 700; text-align: left;
+  }
+  #recToggle .chev { font-size: 10px; color: #999; transition: transform .15s; }
+  #records.open #recToggle .chev { transform: rotate(90deg); }
+  #recBody { display: none; }
+  #records.open #recBody { display: block; }
   .rec-item {
     display: flex; justify-content: space-between; font-size: 12px; color: #666;
     padding: 5px 2px; border-bottom: 1px solid #f2f4f8;
@@ -98,6 +113,7 @@
   .rec-item b { color: #2f6fed; }
   .rec-empty { font-size: 12px; color: #bbb; text-align: center; padding: 8px 0; }
   .foot-note { font-size: 10px; color: #c0c0c0; text-align: center; margin-top: 14px; line-height: 1.6; }
+  .foot-note .ver { color: #d9dde4; }
 </style>
 </head>
 <body>
@@ -161,16 +177,16 @@
     <div id="statusHint"></div>
   </div>
 
-  <!-- 练习记录 -->
+  <!-- 练习记录（默认折叠，点击标题展开；清空按钮常驻） -->
   <div id="records">
     <div class="head">
-      <span>练习记录（近 5 次）</span>
+      <button id="recToggle"><span class="chev">▶</span>练习记录（近 5 次）</button>
       <button onclick="StatsStorage.clear()">清空</button>
     </div>
-    <div id="recList"></div>
+    <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。最小原型：仅支持单音。</div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。最小原型：仅支持单音。<br><span class="ver">v5 · 2026-10-22</span></div>
 </div>
 
 <script>
@@ -1062,6 +1078,17 @@ const App = {
     document.getElementById("selSong").addEventListener("change", e => {
       this.switchSong(e.target.value);
     });
+    // 练习记录折叠：默认收起，展开状态记忆到 localStorage
+    const recEl = document.getElementById("records");
+    try {
+      if (localStorage.getItem("score_practice_rec_open") === "1") recEl.classList.add("open");
+    } catch (e) {}
+    document.getElementById("recToggle").addEventListener("click", () => {
+      recEl.classList.toggle("open");
+      try {
+        localStorage.setItem("score_practice_rec_open", recEl.classList.contains("open") ? "1" : "0");
+      } catch (e) {}
+    });
   },
 
   /** 主按钮：根据状态切换 开始/暂停/继续 */
@@ -1222,10 +1249,21 @@ const App = {
 App.init();
 
 /* ---------- PWA：Service Worker 注册 ----------
- * 仅在 HTTPS 或 localhost 下可用（file:// 打开会静默跳过，不影响直接运行） */
+ * 仅在 HTTPS 或 localhost 下可用（file:// 打开会静默跳过，不影响直接运行）
+ * updateViaCache:"none" + 主动 update()：确保 sw.js 本身不被 HTTP 缓存，
+ * 旧缓存能及时清掉，避免浏览器预览一直是旧界面 */
 if ("serviceWorker" in navigator &&
     (location.protocol === "https:" || location.hostname === "localhost")) {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+    .then(reg => reg.update())
+    .catch(() => {});
+  // 新 SW 接管后自动刷新一次，避免一直停留在旧界面（练习中不打断）
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swReloaded) return;
+    swReloaded = true;
+    if (App.state !== "practicing") location.reload();
+  });
 }
 
 /* ---------- 手机前后台切换处理 ----------
