@@ -186,7 +186,7 @@
     <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。最小原型：仅支持单音。<br><span class="ver">v5 · 2026-10-22</span></div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。最小原型：仅支持单音。<br><span class="ver">v6 · 2026-10-23</span></div>
 </div>
 
 <script>
@@ -367,7 +367,7 @@ const AudioCapture = {
   effectiveRate: 22050,            // 降采样后的等效采样率
   running: false,
   // 可调参数（最小原型取固定经验值）
-  RMS_GATE: 0.006,                 // 静音门限：低于视为无声（漏气/未吹）
+  RMS_GATE: 0.003,                 // 静音门限：低于视为无声（漏气/未吹），口琴轻吹也能触发
   CLIP_RATIO: 0.005,               // 削波判定：触顶采样占比超过即视为多音/爆音
 
   /** 初始化 AudioContext 与麦克风（需在用户点击手势内调用） */
@@ -387,7 +387,8 @@ const AudioCapture = {
     this.rollIdx = 0;
     this.effectiveRate = this.ctx.sampleRate / 2;
 
-    this.processor = this.ctx.createScriptProcessor(2048, 1, 1);
+    // bufferSize 取 1024（约 23ms），在延迟与 CPU 间取平衡；2048 时吹奏反馈明显滞后
+    this.processor = this.ctx.createScriptProcessor(1024, 1, 1);
     this.processor.onaudioprocess = e => this._onFrame(e.inputBuffer.getChannelData(0));
     this.source.connect(this.processor);
 
@@ -446,7 +447,7 @@ const AudioCapture = {
  * 通用单音检测，适配 60~1600Hz（吉他低音弦 ~82Hz 到小提琴高音区）。
  * ===================================================================== */
 const PitchDetector = {
-  MIN_FREQ: 60, MAX_FREQ: 1600, THRESHOLD: 0.15, MIN_CLARITY: 0.80,
+  MIN_FREQ: 60, MAX_FREQ: 1600, THRESHOLD: 0.15, MIN_CLARITY: 0.55,
   NOTE_NAMES: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"],
 
   /**
@@ -700,12 +701,12 @@ const ScoreRenderer = {
     else if (n.matched) ink = C.correct;
     else if (n.detectedWrong) ink = C.wrong;
 
-    // 正确音符：命中后绿色高亮约 180ms，随后 420ms 内快速淡出至接近透明，
-    // 与始终不透明的红色错误音符形成明显区分
+    // 正确音符：命中后绿色高亮约 100ms，随后 250ms 内快速淡出至近乎透明，
+    // 与始终不透明的红色错误音符形成明显区分；目标 alpha 极低避免"残留感"
     let alpha = 1;
     if (n.matched && n.hitAt) {
       const elapsed = performance.now() - n.hitAt;
-      if (elapsed > 180) alpha = Math.max(0.05, 1 - (elapsed - 180) / 420);
+      if (elapsed > 100) alpha = Math.max(0.01, 1 - (elapsed - 100) / 250);
     }
 
     // 正在演奏的音符：橙色光晕（作为位置指示，不随淡出消失）
@@ -891,10 +892,13 @@ const CompareEngine = {
    * @param {number} songTime 乐曲时间
    * @param {object|null} p PitchDetector 输出 {midi, cents} 或 null（无声/无效）
    */
+  // 判定窗口容差：LEAD 允许抢拍提前吹，LAG 给尾音留宽限期，降低"卡拍"压力
+  LEAD: 0.15, LAG: 0.10,
+
   update(songTime, p) {
     if (songTime < 0 || !p) return;
     for (const n of this.notes) {
-      if (songTime >= n.startSec && songTime < n.endSec && !n.done) {
+      if (songTime >= n.startSec - this.LEAD && songTime < n.endSec + this.LAG && !n.done) {
         const diff = this._centsDiff(p, n);
         if (Math.abs(diff) <= this.tolerance) {
           if (!n.matched) n.hitAt = performance.now();   // 记录首次命中时刻，触发绿闪淡出
@@ -905,10 +909,10 @@ const CompareEngine = {
     }
   },
 
-  /** 音符窗口结束时收尾判定：无匹配 → 漏吹红 */
+  /** 音符窗口结束时收尾判定：无匹配 → 漏吹红（含 LAG 宽限期） */
   finalizeUpTo(songTime) {
     for (const n of this.notes) {
-      if (!n.done && songTime >= n.endSec) {
+      if (!n.done && songTime >= n.endSec + this.LAG) {
         n.done = true;
         n.correct = n.matched;   // 有命中即绿，否则红
       }
