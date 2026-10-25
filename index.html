@@ -73,6 +73,12 @@
   /* 横屏模式：全屏覆盖层，顶部正确率/识别音名，中间乐谱占满，底部暂停/重开，左上角退出 */
   #landscape { position: fixed; inset: 0; z-index: 50; background: #fff; display: none; flex-direction: column; }
   #landscape.on { display: flex; }
+  /* 竖屏视口进入横屏时：整体旋转 90° 呈现横屏布局（宽高互换，居中后旋转） */
+  #landscape.ls-rotate {
+    inset: auto; left: 50%; top: 50%;
+    width: 100vh; height: 100vw;
+    transform: translate(-50%, -50%) rotate(90deg);
+  }
   .ls-top { display: flex; align-items: center; gap: 10px; padding: 6px 10px; flex: none; }
   #lsExit {
     flex: none; width: 34px; height: 34px; padding: 0; border-radius: 50%;
@@ -203,7 +209,7 @@
     <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v8 · 2026-10-25</span></div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v9 · 2026-10-25</span></div>
 </div>
 
 <!-- 横屏模式覆盖层 -->
@@ -643,22 +649,29 @@ const ScoreRenderer = {
     }
   },
 
-  /** 画布手势：点击（位移<8px 且 <400ms）切换回顾模式；回顾模式下支持上下滑动与滚轮 */
+  /** 画布手势：点击（位移<8px 且 <400ms）切换回顾模式；回顾模式下支持上下滑动与滚轮。
+   *  横屏旋转 90° 呈现时，视觉横向滑动映射为内容纵向滚动（坐标系随 transform 旋转） */
   _bindGestures() {
     const cv = this.canvas;
-    let startY = 0, startT = 0, lastY = 0, moved = false;
+    let startX = 0, startY = 0, startT = 0, lastX = 0, lastY = 0, moved = false;
 
     cv.addEventListener("touchstart", e => {
+      startX = lastX = e.touches[0].clientX;
       startY = lastY = e.touches[0].clientY;
       startT = performance.now(); moved = false;
     }, { passive: true });
 
     cv.addEventListener("touchmove", e => {
       if (!this.reviewMode) return;
-      const y = e.touches[0].clientY;
-      if (Math.abs(y - startY) > 8) moved = true;
-      this.scrollY -= (y - lastY);          // 手指上滑 → 内容下移（查看下方）
-      lastY = y;
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > 8) moved = true;
+      if (this.rotated) {
+        this.scrollY -= (t.clientX - lastX);   // 旋转态：视觉横向滑动 ↔ 内容纵向滚动
+        lastX = t.clientX;
+      } else {
+        this.scrollY -= (t.clientY - lastY);   // 常规：视觉纵向滑动
+        lastY = t.clientY;
+      }
       e.preventDefault();                   // 阻止页面滚动，手势只作用于乐谱
     }, { passive: false });
 
@@ -679,13 +692,17 @@ const ScoreRenderer = {
     }, { passive: false });
   },
 
-  /** 高分屏适配：CSS 尺寸 × devicePixelRatio */
+  /** 高分屏适配：CSS 布局尺寸 × devicePixelRatio（用 clientWidth/Height，不受横屏旋转 transform 干扰） */
   resize() {
-    const rect = this.canvas.getBoundingClientRect();
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    if (!w || !h) return;
     this.dpr = window.devicePixelRatio || 1;
-    this.W = rect.width; this.H = rect.height;
-    this.canvas.width = Math.round(rect.width * this.dpr);
-    this.canvas.height = Math.round(rect.height * this.dpr);
+    this.canvas.width = Math.round(w * this.dpr);
+    this.canvas.height = Math.round(h * this.dpr);
+    this.W = w; this.H = h;
+    // 横屏画布且处于旋转 90° 呈现状态 → 手势坐标需要映射
+    this.rotated = this.canvas.id === "scoreLs" &&
+      document.getElementById("landscape").classList.contains("ls-rotate");
   },
 
   /** MIDI → 全音阶位置（C=0 … B=6 逐音级累加），用于把音高映射到谱表纵坐标 */
@@ -1215,6 +1232,10 @@ const App = {
     this.totalSec = this.notes[this.notes.length - 1].endSec;
     CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
     this._updateSubtitle();
+    // 横屏开着时窗口尺寸变化（如旋转手机）→ 重新判断是否旋转呈现
+    window.addEventListener("resize", () => {
+      if (document.getElementById("landscape").classList.contains("on")) this._updateLsOrientation();
+    });
     requestAnimationFrame(() => this.tick());
   },
 
@@ -1372,9 +1393,10 @@ const App = {
   /* ---------- 横屏模式 ---------- */
   enterLandscape() {
     document.getElementById("landscape").classList.add("on");
+    this._updateLsOrientation();
     ScoreRenderer.attach(document.getElementById("scoreLs"));
     this._syncButtons();
-    // 尽力锁定屏幕方向为横屏（依赖全屏；WebView 不支持时静默失败，用户手动旋转即可）
+    // 尽力锁定屏幕方向为横屏（依赖全屏；WebView 不支持时静默失败，旋转布局兜底）
     try {
       const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
       if (p) p.then(() => screen.orientation.lock("landscape")).catch(() => {});
@@ -1384,6 +1406,12 @@ const App = {
     document.getElementById("landscape").classList.remove("on");
     ScoreRenderer.attach(document.getElementById("score"));
     try { screen.orientation.unlock(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (e) {}
+  },
+  /** 视口为竖屏时给横屏层加旋转类（宽高互换呈现横屏布局），下一帧重算画布尺寸 */
+  _updateLsOrientation() {
+    const ls = document.getElementById("landscape");
+    ls.classList.toggle("ls-rotate", window.innerWidth < window.innerHeight);
+    requestAnimationFrame(() => ScoreRenderer.resize());
   },
 
   /* ---------- 音频回调入口（AudioCapture 每帧调用） ---------- */
