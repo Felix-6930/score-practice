@@ -144,6 +144,7 @@
       <div class="big" id="resultAcc">0%</div>
       <div class="detail" id="resultDetail"></div>
       <button onclick="App.retry()">再来一次</button>
+      <button class="secondary" onclick="App.showReview()">查看演奏详情</button>
     </div>
   </div>
 
@@ -186,7 +187,7 @@
     <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。最小原型：仅支持单音。<br><span class="ver">v6 · 2026-10-23</span></div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。点击乐谱进入回顾模式，上下滑动逐音核对结果。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v7 · 2026-10-24</span></div>
 </div>
 
 <script>
@@ -447,7 +448,7 @@ const AudioCapture = {
  * 通用单音检测，适配 60~1600Hz（吉他低音弦 ~82Hz 到小提琴高音区）。
  * ===================================================================== */
 const PitchDetector = {
-  MIN_FREQ: 60, MAX_FREQ: 1600, THRESHOLD: 0.15, MIN_CLARITY: 0.55,
+  MIN_FREQ: 60, MAX_FREQ: 1600, THRESHOLD: 0.15, MIN_CLARITY: 0.65,
   NOTE_NAMES: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"],
 
   /**
@@ -494,11 +495,50 @@ const PitchDetector = {
       if (yin[best] > 0.5) return null;   // 完全无明显周期性 → 杂音
       tauEst = best;
     }
+    // 第3.5步：多音检测（两道防线）
+    // 防线1：扫描所有显著谷，若存在与基频谷无整数倍关系、深度接近的第二深谷，
+    // 说明多音共存（背景乐/他人演奏/和弦）→ 拒识，避免识别音名乱跳。
+    // 谐波谷判定用绝对距离，容差随倍数 k 放宽（tauEst 整数舍入误差会按倍数累积）
+    for (let tau = minTau + 1; tau < maxTau - 1; tau++) {
+      if (yin[tau] < 0.4 && yin[tau] <= yin[tau - 1] && yin[tau] <= yin[tau + 1]) {
+        if (Math.abs(tau - tauEst) <= 2) continue;                          // 基频谷本身
+        const k = Math.round(tau / tauEst);
+        if (k >= 1 && Math.abs(tau - k * tauEst) <= k * 0.6 + 1.5) continue; // 谐波谷，排除
+        if (yin[tau] < yin[tauEst] * 1.8) return null;                       // 第二深谷 → 多音
+      }
+    }
+    // 防线2：双音等能量混合时，YIN 会落到两音周期的公倍数上（如 E5+G5 误判为
+    // 低八度的组合音），各成分音在 tauEst 之前形成"差点成谷"的下压区。
+    // 单音时基频之前 yin 都很高（无对齐位置）；故检查 tauEst 之前是否存在
+    // 明显下压（< 0.45）且与 tauEst 无整数倍关系 → 判定为多音，拒识。
+    // 检查范围限定 < 0.8*tauEst，避开基频谷肩部（肩部自然下压，非成分音）
+    let preMin = Infinity, prePos = -1;
+    const preEnd = Math.floor(tauEst * 0.8);
+    for (let tau = minTau; tau < preEnd; tau++) {
+      if (yin[tau] < preMin) { preMin = yin[tau]; prePos = tau; }
+    }
+    if (preMin < 0.45 && prePos > 0) {
+      const k = Math.round(tauEst / prePos);
+      const related = k >= 2 && Math.abs(tauEst - k * prePos) <= k * 0.6 + 1.5;
+      if (!related) return null;   // 存在与基频无关的下压区 → 多音
+    }
+
+    // 第3.6步：谐波验证 —— 真实乐音的差分函数在 2τ/3τ 处也有谷（周期延拓）；
+    // 白噪声/敲击声/摩擦声没有此结构 → 拒识。清晰度很高的信号（近正弦，如哨声）豁免
+    const clarity = 1 - yin[tauEst];
+    if (clarity < this.MIN_CLARITY) return null;
+    if (clarity < 0.85) {
+      let harmonicOk = false;
+      for (const k of [2, 3]) {
+        const t2 = tauEst * k;
+        if (t2 <= maxTau && yin[t2] < 0.65) { harmonicOk = true; break; }
+      }
+      if (!harmonicOk) return null;   // 无谐波结构 → 判定为杂音
+    }
+
     // 第4步：抛物线插值细化周期，提升音分精度
     const betterTau = this._parabolic(yin, tauEst);
     const freq = rate / betterTau;
-    const clarity = 1 - yin[tauEst];
-    if (clarity < this.MIN_CLARITY) return null;
     return this.freqToNote(freq, clarity);
   },
 
@@ -534,6 +574,11 @@ const ScoreRenderer = {
   GUTTER_W: 84,             // 左侧谱头区（谱号/拍号）宽度，乐谱内容在此左侧被裁剪
   GAP: 13,                  // 五线谱线间距（一个音级 = 半线间距）
   STEM_LEN: 43,             // 符干长度
+  // --- 回顾模式：点击乐谱进入，多行静态排布 + 上下滑动查看每个音符的演奏结果 ---
+  reviewMode: false,
+  scrollY: 0,               // 回顾模式纵向滚动偏移
+  ROW_BEATS: 8,             // 回顾模式每行拍数（4/4 拍下即 2 小节）
+  _lastTouchEnd: 0,         // 上次触摸结束时刻（用于抑制触摸后派生的 click 重复切换）
   COLORS: {
     bg: "#fdfdfd", staff: "#9aa3b0", barline: "#c3cad6", playhead: "#ff5722",
     ink: "#2b2f36", correct: "#2e9e5b", wrong: "#e53935", active: "#f5a623",
@@ -545,6 +590,54 @@ const ScoreRenderer = {
     this.ctx2d = canvas.getContext("2d");
     this.resize();
     window.addEventListener("resize", () => this.resize());
+    this._bindGestures();
+  },
+
+  /** 切换回顾模式：展开画布高度并清零滚动；退出时若已完赛则恢复结算浮层 */
+  toggleReview() {
+    this.reviewMode = !this.reviewMode;
+    this.scrollY = 0;
+    this.canvas.style.height = this.reviewMode ? "320px" : "200px";
+    this.resize();
+    if (!this.reviewMode && App.state === "finished") {
+      document.getElementById("resultOverlay").style.display = "flex";
+    }
+  },
+
+  /** 画布手势：点击（位移<8px 且 <400ms）切换回顾模式；回顾模式下支持上下滑动与滚轮 */
+  _bindGestures() {
+    const cv = this.canvas;
+    let startY = 0, startT = 0, lastY = 0, moved = false;
+
+    cv.addEventListener("touchstart", e => {
+      startY = lastY = e.touches[0].clientY;
+      startT = performance.now(); moved = false;
+    }, { passive: true });
+
+    cv.addEventListener("touchmove", e => {
+      if (!this.reviewMode) return;
+      const y = e.touches[0].clientY;
+      if (Math.abs(y - startY) > 8) moved = true;
+      this.scrollY -= (y - lastY);          // 手指上滑 → 内容下移（查看下方）
+      lastY = y;
+      e.preventDefault();                   // 阻止页面滚动，手势只作用于乐谱
+    }, { passive: false });
+
+    cv.addEventListener("touchend", () => {
+      this._lastTouchEnd = performance.now();
+      if (!moved && performance.now() - startT < 400) this.toggleReview();
+    });
+
+    // 桌面端：点击切换 + 滚轮滑动；触摸后的派生 click 需忽略，避免切换两次
+    cv.addEventListener("click", () => {
+      if (performance.now() - this._lastTouchEnd < 600) return;
+      this.toggleReview();
+    });
+    cv.addEventListener("wheel", e => {
+      if (!this.reviewMode) return;
+      this.scrollY += e.deltaY;
+      e.preventDefault();
+    }, { passive: false });
   },
 
   /** 高分屏适配：CSS 尺寸 × devicePixelRatio */
@@ -597,6 +690,9 @@ const ScoreRenderer = {
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     c.clearRect(0, 0, W, H);
     c.fillStyle = C.bg; c.fillRect(0, 0, W, H);
+
+    // 回顾模式：多行静态乐谱，独立于实时滚动逻辑
+    if (this.reviewMode) { this._drawReview(notes); return; }
 
     // 谱表几何：topY = 第 5 线（最上），bottomY = 第 1 线（最下，即 E4）
     const centerY = H * 0.50;
@@ -652,7 +748,7 @@ const ScoreRenderer = {
     for (const n of notes) {
       const x = playheadX + (n.startSec - songTime) * this.PX_PER_SEC;
       if (x < this.GUTTER_W - 20 || x > W + 20) continue;
-      this._drawNote(n, x, songTime, phase, bottomY);
+      this._drawNote(n, x, songTime, phase, bottomY, false);
     }
     c.restore();                       // 解除乐谱区裁剪
 
@@ -684,33 +780,111 @@ const ScoreRenderer = {
   },
 
   /**
+   * 回顾模式：整首乐谱按多行静态排布（每行 2 小节），上下滑动查看。
+   * 音符以最终结果着色：绿=正确，红=吹错/漏吹，黑=尚未演奏到。
+   * 不随时间滚动、不淡出，便于逐音核对。
+   */
+  _drawReview(notes) {
+    const c = this.ctx2d, W = this.W, H = this.H, C = this.COLORS, g = this.GAP;
+    const secPerBeat = 60 / App.bpm;
+    const rowSec = this.ROW_BEATS * secPerBeat;
+    const barsPerRow = this.ROW_BEATS / ScoreData.timeSignature;
+    const rows = Math.max(1, Math.ceil((App.totalSec || 0.001) / rowSec));
+    const HEADER = 30;                          // 顶部提示条高度
+    const ROW_H = g * 4 + 66;                   // 行高：谱表 4g + 上加线空间 + 孔位标注行 + 行距
+    const contentH = rows * ROW_H + 10;
+    const maxScroll = Math.max(0, HEADER + contentH - H);
+    this.scrollY = Math.max(0, Math.min(this.scrollY, maxScroll));
+
+    // 顶部提示条（固定，不随内容滚动）
+    c.fillStyle = "#2f6fed"; c.fillRect(0, 0, W, HEADER);
+    c.fillStyle = "#fff"; c.font = "12px sans-serif";
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText("回顾模式 · 上下滑动查看 · 点击乐谱返回", W / 2, HEADER / 2 + 0.5);
+
+    // 内容区：裁剪到提示条以下，随 scrollY 平移
+    c.save();
+    c.beginPath(); c.rect(0, HEADER, W, H - HEADER); c.clip();
+    c.translate(0, HEADER - this.scrollY);
+
+    const left = 40, right = W - 14;
+    for (let r = 0; r < rows; r++) {
+      const rowTop = r * ROW_H + 6;
+      const topY = rowTop + 22, bottomY = topY + 4 * g;
+
+      // 5 条谱线
+      c.strokeStyle = C.staff; c.lineWidth = 1;
+      for (let i = 0; i < 5; i++) {
+        const y = Math.round(topY + i * g) + 0.5;
+        c.beginPath(); c.moveTo(left, y); c.lineTo(right, y); c.stroke();
+      }
+      // 行内小节线（含行末）
+      c.strokeStyle = C.barline;
+      for (let b = 0; b <= barsPerRow; b++) {
+        const x = left + (b / barsPerRow) * (right - left);
+        c.beginPath(); c.moveTo(x, topY); c.lineTo(x, bottomY); c.stroke();
+      }
+      // 行首小节号
+      c.fillStyle = C.measure; c.font = "9px sans-serif";
+      c.textAlign = "right"; c.textBaseline = "middle";
+      c.fillText(String(r * barsPerRow + 1), left - 8, topY - 8);
+
+      // 行内音符（按时间比例定位横坐标）
+      const rowStart = r * rowSec;
+      for (const n of notes) {
+        if (n.startSec < rowStart - 1e-6 || n.startSec >= rowStart + rowSec) continue;
+        const x = left + ((n.startSec - rowStart) / rowSec) * (right - left);
+        // 加线（下加线/上加线）
+        const y = this._noteY(n.midi, bottomY);
+        c.strokeStyle = C.barline; c.lineWidth = 1;
+        for (const ly of this._ledgerYs(y, topY, bottomY)) {
+          c.beginPath(); c.moveTo(x - 13, Math.round(ly) + 0.5); c.lineTo(x + 13, Math.round(ly) + 0.5); c.stroke();
+        }
+        this._drawNote(n, x, 0, "review", bottomY, true);
+      }
+    }
+    c.restore();
+
+    // 右侧滚动条指示（内容超出一屏时显示）
+    if (maxScroll > 0) {
+      const trackH = H - HEADER;
+      const barH = Math.max(24, trackH * trackH / contentH);
+      const barY = HEADER + (trackH - barH) * (this.scrollY / maxScroll);
+      c.fillStyle = "rgba(0,0,0,.18)";
+      this._roundRect(W - 5, barY, 3, barH, 2); c.fill();
+    }
+  },
+
+  /**
    * 绘制单个音符符号：符头 + 符干 + 符尾 + 附点 + 音名标签
    * @param {object} n  buildTimeline 音符（含 matched / detectedWrong / done / correct 状态）
    * @param {number} x  符头横坐标
    * @param {number} bottomY 第 1 线纵坐标
    */
-  _drawNote(n, x, songTime, phase, bottomY) {
+  _drawNote(n, x, songTime, phase, bottomY, review) {
     const c = this.ctx2d, C = this.COLORS, g = this.GAP;
     const y = this._noteY(n.midi, bottomY);
     const diat = this._diatonic(n.midi);
     const st = this._noteStyle(n.beats);
 
     // 状态 → 墨色：待演奏=黑 / 正确=绿 / 错误=红
+    // 回顾模式下未判定的音符一律保持黑色（只展示最终结果）
     let ink = C.ink;
     if (n.done) ink = n.correct ? C.correct : C.wrong;
-    else if (n.matched) ink = C.correct;
+    else if (n.matched) ink = review ? C.ink : C.correct;
     else if (n.detectedWrong) ink = C.wrong;
 
     // 正确音符：命中后绿色高亮约 100ms，随后 250ms 内快速淡出至近乎透明，
     // 与始终不透明的红色错误音符形成明显区分；目标 alpha 极低避免"残留感"
+    // 回顾模式不淡出，始终清晰显示结果
     let alpha = 1;
-    if (n.matched && n.hitAt) {
+    if (!review && n.matched && n.hitAt) {
       const elapsed = performance.now() - n.hitAt;
       if (elapsed > 100) alpha = Math.max(0.01, 1 - (elapsed - 100) / 250);
     }
 
-    // 正在演奏的音符：橙色光晕（作为位置指示，不随淡出消失）
-    if (phase === "practicing" && !n.done && songTime >= n.startSec && songTime < n.endSec) {
+    // 正在演奏的音符：橙色光晕（作为位置指示，不随淡出消失；回顾模式不画）
+    if (!review && phase === "practicing" && !n.done && songTime >= n.startSec && songTime < n.endSec) {
       c.fillStyle = "rgba(245,166,35,.20)";
       this._roundRect(x - 15, y - 17, 30, 34, 9); c.fill();
     }
@@ -758,7 +932,7 @@ const ScoreRenderer = {
 
     // 标注：口琴模式在谱表下方固定行显示孔位（●实心=吹 / ○空心=吸），
     // 通用模式在符头下方显示音名
-    const labelColor = (n.done || n.matched) ? C.labelOn : C.label;
+    const labelColor = (n.done || (!review && n.matched)) ? C.labelOn : C.label;
     if (App.instrumentMode === "harmonica") {
       const mark = Instruments.HARMONICA_C.mark(n.midi);
       const tabY = bottomY + g * 1.35;             // 孔位标注行（谱线与小节号之间）
@@ -988,6 +1162,8 @@ const App = {
   COUNTDOWN: 3,               // 开演倒计时秒数
   lastResult: null,           // 最近一次有效检测结果（供展示）
   resultTimer: 0,
+  _stableMidi: null,          // 帧间稳定：上一帧检测到的 midi
+  _stableCount: 0,            // 帧间稳定：同一 midi 连续出现次数
 
   /* ---------- 生命周期 ---------- */
   init() {
@@ -1109,6 +1285,8 @@ const App = {
   /** 开始练习：初始化麦克风 → 重置乐谱 → 进入倒计时 */
   async start() {
     this.setStatus("");
+    // 回顾模式开着时开始新练习 → 先退出，回到实时滚动视图
+    if (ScoreRenderer.reviewMode) ScoreRenderer.toggleReview();
     if (!AudioCapture.running) {
       this.setStatus("正在请求麦克风权限…");
       try { await AudioCapture.init(); }
@@ -1146,8 +1324,23 @@ const App = {
     this.start();
   },
 
+  /** 结算浮层 → 查看演奏详情：隐藏浮层并进入回顾模式 */
+  showReview() {
+    document.getElementById("resultOverlay").style.display = "none";
+    if (!ScoreRenderer.reviewMode) ScoreRenderer.toggleReview();
+  },
+
   /* ---------- 音频回调入口（AudioCapture 每帧调用） ---------- */
   onPitch(result, rms, clipped) {
+    // 帧间稳定：同一音名需连续 2 帧确认（约 46ms）才采纳，
+    // 过滤敲击/气流突变等瞬时杂音导致的单帧误识别
+    if (result) {
+      if (this._stableMidi === result.midi) this._stableCount++;
+      else { this._stableMidi = result.midi; this._stableCount = 1; }
+      if (this._stableCount < 2) result = null;
+    } else {
+      this._stableMidi = null; this._stableCount = 0;
+    }
     // 实时面板：显示最近一次有效检测结果
     if (result) {
       this.lastResult = result;
