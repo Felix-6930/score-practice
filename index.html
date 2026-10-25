@@ -70,6 +70,21 @@
   #resultOverlay .detail { font-size: 13px; color: #666; }
   #resultOverlay button { margin-top: 6px; }
 
+  /* 横屏模式：全屏覆盖层，顶部正确率/识别音名，中间乐谱占满，底部暂停/重开，左上角退出 */
+  #landscape { position: fixed; inset: 0; z-index: 50; background: #fff; display: none; flex-direction: column; }
+  #landscape.on { display: flex; }
+  .ls-top { display: flex; align-items: center; gap: 10px; padding: 6px 10px; flex: none; }
+  #lsExit {
+    flex: none; width: 34px; height: 34px; padding: 0; border-radius: 50%;
+    background: #eef1f6; color: #666; font-size: 15px; line-height: 1;
+  }
+  .ls-stat { flex: 1; text-align: center; }
+  .ls-stat .ls-label { display: block; font-size: 10px; color: #999; }
+  .ls-stat .ls-val { font-size: 20px; font-weight: 800; color: #333; }
+  .ls-canvas-wrap { flex: 1; position: relative; border-top: 1px solid #eef1f6; border-bottom: 1px solid #eef1f6; overflow: hidden; }
+  #scoreLs { display: block; width: 100%; height: 100%; }
+  .ls-bottom { display: flex; gap: 10px; padding: 8px 10px; flex: none; }
+
   /* 控制区 */
   #controls { margin-top: 12px; }
   .btn-row { display: flex; gap: 8px; }
@@ -153,6 +168,7 @@
     <div class="btn-row">
       <button id="btnMain" onclick="App.onMainButton()">开始练习</button>
       <button id="btnRetry" class="secondary" onclick="App.retry()" disabled>重试</button>
+      <button class="secondary" onclick="App.enterLandscape()" title="横屏大谱面">横屏</button>
     </div>
     <div class="slider-row">
       <span class="name">速度 BPM</span>
@@ -187,7 +203,21 @@
     <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出，漏吹或吹错保持红色。点击乐谱进入回顾模式，上下滑动逐音核对结果。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v7 · 2026-10-24</span></div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v8 · 2026-10-25</span></div>
+</div>
+
+<!-- 横屏模式覆盖层 -->
+<div id="landscape">
+  <div class="ls-top">
+    <button id="lsExit" title="退出横屏" onclick="App.exitLandscape()">✕</button>
+    <div class="ls-stat"><span class="ls-label">正确率</span><span class="ls-val" id="lsAcc">--%</span></div>
+    <div class="ls-stat"><span class="ls-label">识别音名</span><span class="ls-val" id="lsNote">—</span></div>
+  </div>
+  <div class="ls-canvas-wrap"><canvas id="scoreLs"></canvas></div>
+  <div class="ls-bottom">
+    <button id="lsPause" onclick="App.onMainButton()">暂停</button>
+    <button class="secondary" onclick="App.retry()">重新开始</button>
+  </div>
 </div>
 
 <script>
@@ -586,18 +616,27 @@ const ScoreRenderer = {
   },
 
   init(canvas) {
+    this.attach(canvas);
+    window.addEventListener("resize", () => this.resize());
+  },
+
+  /** 切换渲染目标画布（竖屏主画布 ↔ 横屏大画布）；手势每个画布只绑一次 */
+  attach(canvas) {
     this.canvas = canvas;
     this.ctx2d = canvas.getContext("2d");
+    if (!canvas._gesturesBound) {
+      canvas._gesturesBound = true;
+      this._bindGestures();
+    }
     this.resize();
-    window.addEventListener("resize", () => this.resize());
-    this._bindGestures();
   },
 
   /** 切换回顾模式：展开画布高度并清零滚动；退出时若已完赛则恢复结算浮层 */
   toggleReview() {
     this.reviewMode = !this.reviewMode;
     this.scrollY = 0;
-    this.canvas.style.height = this.reviewMode ? "320px" : "200px";
+    // 横屏画布由 flex 撑满，无需改 CSS 高度
+    if (this.canvas.id !== "scoreLs") this.canvas.style.height = this.reviewMode ? "320px" : "200px";
     this.resize();
     if (!this.reviewMode && App.state === "finished") {
       document.getElementById("resultOverlay").style.display = "flex";
@@ -867,16 +906,16 @@ const ScoreRenderer = {
     const diat = this._diatonic(n.midi);
     const st = this._noteStyle(n.beats);
 
-    // 状态 → 墨色：待演奏=黑 / 正确=绿 / 错误=红
-    // 回顾模式下未判定的音符一律保持黑色（只展示最终结果）
+    // 状态 → 墨色
+    // 实时模式：只给绿色正反馈（吹对变绿），吹错/漏吹不标红，减少演奏压力
+    // 回顾模式：展示最终结果——绿=正确，红=吹错/漏吹，黑=未演奏到
     let ink = C.ink;
-    if (n.done) ink = n.correct ? C.correct : C.wrong;
-    else if (n.matched) ink = review ? C.ink : C.correct;
-    else if (n.detectedWrong) ink = C.wrong;
+    if (review) {
+      if (n.done) ink = n.correct ? C.correct : C.wrong;
+    } else if (n.matched) ink = C.correct;
 
-    // 正确音符：命中后绿色高亮约 100ms，随后 250ms 内快速淡出至近乎透明，
-    // 与始终不透明的红色错误音符形成明显区分；目标 alpha 极低避免"残留感"
-    // 回顾模式不淡出，始终清晰显示结果
+    // 正确音符：命中后绿色高亮约 100ms，随后 250ms 内快速淡出至近乎透明；
+    // 目标 alpha 极低避免"残留感"。回顾模式不淡出，始终清晰显示结果
     let alpha = 1;
     if (!review && n.matched && n.hitAt) {
       const elapsed = performance.now() - n.hitAt;
@@ -1330,6 +1369,23 @@ const App = {
     if (!ScoreRenderer.reviewMode) ScoreRenderer.toggleReview();
   },
 
+  /* ---------- 横屏模式 ---------- */
+  enterLandscape() {
+    document.getElementById("landscape").classList.add("on");
+    ScoreRenderer.attach(document.getElementById("scoreLs"));
+    this._syncButtons();
+    // 尽力锁定屏幕方向为横屏（依赖全屏；WebView 不支持时静默失败，用户手动旋转即可）
+    try {
+      const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+      if (p) p.then(() => screen.orientation.lock("landscape")).catch(() => {});
+    } catch (e) {}
+  },
+  exitLandscape() {
+    document.getElementById("landscape").classList.remove("on");
+    ScoreRenderer.attach(document.getElementById("score"));
+    try { screen.orientation.unlock(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (e) {}
+  },
+
   /* ---------- 音频回调入口（AudioCapture 每帧调用） ---------- */
   onPitch(result, rms, clipped) {
     // 帧间稳定：同一音名需连续 2 帧确认（约 46ms）才采纳，
@@ -1386,11 +1442,13 @@ const App = {
       t: Date.now(), bpm: this.bpm, tol: this.tolerance,
       acc: s.acc, hit: s.hit, total: s.total
     });
-    // 结果浮层
+    // 结果浮层（横屏模式下由横屏面板展示结果，不弹浮层）
     document.getElementById("resultAcc").textContent = s.acc.toFixed(0) + "%";
     document.getElementById("resultAcc").style.color = s.acc >= 80 ? "#2e9e5b" : s.acc >= 50 ? "#d08a2e" : "#d0453c";
     document.getElementById("resultDetail").textContent = `命中 ${s.hit}/${s.total} 个音符 · BPM ${this.bpm} · 容错±${this.tolerance}音分`;
-    document.getElementById("resultOverlay").style.display = "flex";
+    if (!document.getElementById("landscape").classList.contains("on")) {
+      document.getElementById("resultOverlay").style.display = "flex";
+    }
     this._syncButtons();
   },
 
@@ -1398,12 +1456,9 @@ const App = {
   _updateRealtime() {
     // 识别音名（400ms 无有效结果回落为 —）
     const noteEl = document.getElementById("rtNote");
-    if (this.lastResult && performance.now() < this.resultTimer) {
-      noteEl.textContent = this.lastResult.name;
-      noteEl.style.color = "#333";
-    } else {
-      noteEl.textContent = "—"; noteEl.style.color = "#bbb";
-    }
+    const noteTxt = (this.lastResult && performance.now() < this.resultTimer) ? this.lastResult.name : "—";
+    const noteColor = noteTxt === "—" ? "#bbb" : "#333";
+    noteEl.textContent = noteTxt; noteEl.style.color = noteColor;
     // 正确率
     const acc = CompareEngine.accuracy();
     const accEl = document.getElementById("rtAcc");
@@ -1414,13 +1469,20 @@ const App = {
       accEl.innerHTML = acc.toFixed(0) + "<small>%</small>";
       accBox.className = "stat-box " + (acc >= 80 ? "correct" : acc >= 50 ? "" : "wrong");
     }
+    // 横屏面板同步
+    const lsNote = document.getElementById("lsNote");
+    lsNote.textContent = noteTxt; lsNote.style.color = noteColor;
+    document.getElementById("lsAcc").textContent = acc === null ? "--%" : acc.toFixed(0) + "%";
   },
 
   _syncButtons() {
     const main = document.getElementById("btnMain");
     const retry = document.getElementById("btnRetry");
-    main.textContent = { idle: "开始练习", countdown: "暂停", practicing: "暂停", paused: "继续", finished: "开始练习" }[this.state];
+    const label = { idle: "开始练习", countdown: "暂停", practicing: "暂停", paused: "继续", finished: "开始练习" }[this.state];
+    main.textContent = label;
     retry.disabled = this.state === "idle";
+    // 横屏底部按钮同步（重开始终可用，主按钮只显示 暂停/继续）
+    document.getElementById("lsPause").textContent = this.state === "paused" ? "继续" : "暂停";
     // 练习中锁定滑块，避免时间轴错乱
     document.getElementById("sliderBpm").disabled = this.state !== "idle";
   },
