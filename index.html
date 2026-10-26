@@ -209,7 +209,7 @@
     <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v9 · 2026-10-25</span></div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v10 · 2026-10-26</span></div>
 </div>
 
 <!-- 横屏模式覆盖层 -->
@@ -330,6 +330,73 @@ const SongLibrary = [
       { pitch: "D6", beats: 2 },
       { pitch: "E6", beats: 1 }, { pitch: "D6", beats: 1 },
       { pitch: "C6", beats: 2 },
+    ]
+  },
+  {
+    id: "mary", name: "玛丽有只小羊羔", timeSignature: 4, beatUnit: 4, defaultBPM: 100,
+    // Mary Had a Little Lamb：C5~G5，仅用 4 个自然音
+    // C5=4吹 D5=4吸 E5=5吹 G5=6吹，全部为吹/吸自然音，无压音
+    notes: [
+      { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 2 },
+      { pitch: "D5", beats: 1 }, { pitch: "D5", beats: 1 }, { pitch: "D5", beats: 2 },
+      { pitch: "E5", beats: 1 }, { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 2 },
+      { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 4 },
+    ]
+  },
+  {
+    id: "lullaby", name: "摇篮曲", timeSignature: 3, beatUnit: 4, defaultBPM: 76,
+    // 勃拉姆斯《摇篮曲》（1=C，3/4，简化版）：E5~F6
+    // 前半 3 3 5 | 3 5 1̇ 7 | 6 6 5，后半向上四度模进 6 6 1̇ | 6 1̇ 4̇ 3̇ | 2 2 1
+    // E5=5吹 C6=7吹 B5=7吸 A5=6吸 G5=6吹 D6=8吸 E6=8吹 F6=9吸
+    notes: [
+      { pitch: "E5", beats: 0.5 }, { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 2 },
+      { pitch: "E5", beats: 0.5 }, { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 2 },
+      { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 0.5 }, { pitch: "C6", beats: 1 }, { pitch: "B5", beats: 1 },
+      { pitch: "A5", beats: 0.5 }, { pitch: "A5", beats: 0.5 }, { pitch: "G5", beats: 2 },
+      { pitch: "A5", beats: 0.5 }, { pitch: "A5", beats: 0.5 }, { pitch: "C6", beats: 2 },
+      { pitch: "A5", beats: 0.5 }, { pitch: "A5", beats: 0.5 }, { pitch: "C6", beats: 2 },
+      { pitch: "A5", beats: 0.5 }, { pitch: "C6", beats: 0.5 }, { pitch: "F6", beats: 1 }, { pitch: "E6", beats: 1 },
+      { pitch: "D6", beats: 0.5 }, { pitch: "D6", beats: 0.5 }, { pitch: "C6", beats: 2 },
+    ]
+  },
+  {
+    id: "susanna", name: "哦，苏珊娜", timeSignature: 4, beatUnit: 4, defaultBPM: 108,
+    // Oh! Susanna（简化版，C5~A5）：副歌 + 主歌，重复同一旋律轮廓
+    // C5=4吹 D5=4吸 E5=5吹 F5=5吸 G5=6吹 A5=6吸
+    notes: [
+      // 副歌：Oh Susanna, oh don't you cry for me
+      { pitch: "C5", beats: 0.5 }, { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 2 },
+      { pitch: "A5", beats: 1 }, { pitch: "G5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "C5", beats: 0.5 }, { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 2 },
+      { pitch: "F5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 }, { pitch: "C5", beats: 1 },
+      // 主歌：I come from Alabama with my banjo on my knee
+      { pitch: "C5", beats: 0.5 }, { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 2 },
+      { pitch: "A5", beats: 1 }, { pitch: "G5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 },
+      { pitch: "C5", beats: 0.5 }, { pitch: "E5", beats: 0.5 }, { pitch: "G5", beats: 1 }, { pitch: "G5", beats: 2 },
+      { pitch: "F5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 }, { pitch: "C5", beats: 1 },
+    ]
+  },
+  {
+    id: "auldlang", name: "友谊地久天长", timeSignature: 4, beatUnit: 4, defaultBPM: 84,
+    // Auld Lang Syne（1=C，4/4，简化版，C5~A5）：1 1 1 3 | 2 1 2 3 | 1 1 3 5 | 6 --
+    // 后半：6 6 5 3 | 3 1 2 3 | 1 1 3 2 | 1（去掉弱起，从小节第一拍起唱）
+    notes: [
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "D5", beats: 1 }, { pitch: "C5", beats: 1 }, { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "G5", beats: 1 },
+      { pitch: "A5", beats: 2 }, { pitch: "G5", beats: 2 },
+      { pitch: "A5", beats: 1 }, { pitch: "A5", beats: 1 }, { pitch: "G5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "E5", beats: 1 }, { pitch: "C5", beats: 1 }, { pitch: "D5", beats: 1 }, { pitch: "E5", beats: 1 },
+      { pitch: "C5", beats: 1 }, { pitch: "C5", beats: 1 }, { pitch: "E5", beats: 1 }, { pitch: "D5", beats: 1 },
+      { pitch: "C5", beats: 4 },
     ]
   }
 ];
@@ -843,8 +910,9 @@ const ScoreRenderer = {
   _drawReview(notes) {
     const c = this.ctx2d, W = this.W, H = this.H, C = this.COLORS, g = this.GAP;
     const secPerBeat = 60 / App.bpm;
-    const rowSec = this.ROW_BEATS * secPerBeat;
-    const barsPerRow = this.ROW_BEATS / ScoreData.timeSignature;
+    // 每行小节数取整（约 8 拍），否则 3/4 拍下小节线与时间轴会错位
+    const barsPerRow = Math.max(1, Math.round(this.ROW_BEATS / ScoreData.timeSignature));
+    const rowSec = barsPerRow * ScoreData.timeSignature * secPerBeat;
     const rows = Math.max(1, Math.ceil((App.totalSec || 0.001) / rowSec));
     const HEADER = 30;                          // 顶部提示条高度
     const ROW_H = g * 4 + 66;                   // 行高：谱表 4g + 上加线空间 + 孔位标注行 + 行距
