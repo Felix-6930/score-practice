@@ -209,7 +209,7 @@
     <div id="recBody"><div id="recList"></div></div>
   </div>
 
-  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v10 · 2026-10-26</span></div>
+  <div class="foot-note">口琴模式：谱面下方标出孔位，●实心圆=吹，○空心圆=吸（如 ●5 = 第5孔吹）。<br>吹对后音符闪绿并淡出；点击乐谱进入回顾模式核对结果（绿=对 / 红=错漏）。<br>抗噪：谐波验证 + 帧间稳定过滤杂音；检测到多音环境自动拒识。最小原型：仅支持单音判定。<br><span class="ver">v11 · 2026-10-28</span></div>
 </div>
 
 <!-- 横屏模式覆盖层 -->
@@ -507,6 +507,15 @@ const AudioCapture = {
     return true;
   },
 
+  /** 确保音频链路可用：未启动则启动，被系统挂起则恢复（重复调用安全） */
+  async ensureRunning() {
+    if (!this.running) return this.init();
+    if (this.ctx && this.ctx.state === "suspended") {
+      try { await this.ctx.resume(); } catch (e) { /* 恢复失败时保持现状 */ }
+    }
+    return true;
+  },
+
   /** 单帧预处理：滚动缓冲 → 降采样 → RMS/削波检查 → 交给音高检测 */
   _onFrame(chunk) {
     // 写入滚动缓冲
@@ -537,7 +546,9 @@ const AudioCapture = {
     App.onPitch(result, rms);
   },
 
-  get now() { return this.ctx ? this.ctx.currentTime : 0; },
+  /* 计时统一用单调时钟：AudioContext 被系统挂起（锁屏 / 切后台 / 音频焦点丢失）时
+     currentTime 会停止推进，曾导致倒计时卡死、点「重新开始」看起来毫无反应 */
+  get now() { return performance.now() / 1000; },
   destroy() {
     if (this.processor) this.processor.disconnect();
     if (this.source) this.source.disconnect();
@@ -1322,22 +1333,34 @@ const App = {
     sel.value = ScoreData.id;
   },
 
-  /** 切换乐谱：仅待机/结束状态允许，切换后重置到 idle */
+  /** 切换乐谱：任何时候都可切换；演奏中/暂停中切换会先中止当前练习并载入新曲 */
   switchSong(id) {
-    if (this.state === "practicing" || this.state === "countdown" || this.state === "paused") return;
     const song = SongLibrary.find(s => s.id === id);
-    if (!song || song.id === ScoreData.id) return;
-    ScoreData = song;
-    this.bpm = song.defaultBPM;
-    document.getElementById("sliderBpm").value = this.bpm;
-    document.getElementById("valBpm").textContent = this.bpm;
-    this.notes = buildTimeline(this.bpm);
-    this.totalSec = this.notes[this.notes.length - 1].endSec;
+    if (!song) return;
+    const same = song.id === ScoreData.id;
+    if (!same) {
+      ScoreData = song;
+      this.bpm = song.defaultBPM;
+      document.getElementById("sliderBpm").value = this.bpm;
+      document.getElementById("valBpm").textContent = this.bpm;
+      this.notes = buildTimeline(this.bpm);
+      this.totalSec = this.notes[this.notes.length - 1].endSec;
+      this._updateSubtitle();
+    }
+    // 无论切换到哪首，都中止进行中的练习，避免旧曲的判定/结算残留
+    this.abortPractice();
     CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
-    this.state = "idle";
-    document.getElementById("resultOverlay").style.display = "none";
-    this._updateSubtitle();
+    document.getElementById("selSong").value = ScoreData.id;   // 程序化切换时保持下拉框一致
     this._syncButtons();
+  },
+
+  /** 中止练习：回到待机状态，清掉结算浮层与回顾滚动位置（切曲 / 重开时复用） */
+  abortPractice() {
+    this.state = "idle";
+    this._releaseWakeLock();
+    document.getElementById("resultOverlay").style.display = "none";
+    if (ScoreRenderer.reviewMode) ScoreRenderer.toggleReview();
+    ScoreRenderer.scrollY = 0;
   },
 
   _updateSubtitle() {
@@ -1417,12 +1440,10 @@ const App = {
     this.setStatus("");
     // 回顾模式开着时开始新练习 → 先退出，回到实时滚动视图
     if (ScoreRenderer.reviewMode) ScoreRenderer.toggleReview();
-    if (!AudioCapture.running) {
-      this.setStatus("正在请求麦克风权限…");
-      try { await AudioCapture.init(); }
-      catch (e) { this.setStatus("麦克风授权失败：" + e.message + "（需 HTTPS/localhost）"); return; }
-      this.setStatus("");
-    }
+    if (!AudioCapture.running) this.setStatus("正在请求麦克风权限…");
+    try { await AudioCapture.ensureRunning(); }
+    catch (e) { this.setStatus("麦克风授权失败：" + e.message + "（需 HTTPS/localhost）"); return; }
+    this.setStatus("");
     this.readControls();
     this.notes = buildTimeline(this.bpm);
     CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
@@ -1448,10 +1469,25 @@ const App = {
     this.state = this._songTime() < 0 ? "countdown" : "practicing";
     this._syncButtons();
   },
+  /** 重新开始：重置时间轴直接进入倒计时，不依赖重新申请麦克风（横屏/竖屏共用） */
   retry() {
-    if (this.state === "idle") return;
-    this.state = "idle";
-    this.start();
+    this.readControls();
+    this.notes = buildTimeline(this.bpm);
+    this.totalSec = this.notes[this.notes.length - 1].endSec;
+    CompareEngine.reset(this.notes, this.tolerance, this.octaveFree);
+    CompareEngine.octaveFree = this.octaveFree;
+    CompareEngine.tolerance = this.tolerance;
+    if (ScoreRenderer.reviewMode) ScoreRenderer.toggleReview();
+    ScoreRenderer.scrollY = 0;
+    document.getElementById("resultOverlay").style.display = "none";
+    this.startTime = AudioCapture.now + this.COUNTDOWN;
+    this.state = "countdown";
+    this._requestWakeLock();
+    this._syncButtons();
+    // 麦克风尚未启动（首次 / 被系统释放）或被挂起时，异步补齐；同时恢复音频链路
+    AudioCapture.ensureRunning().catch(() => {
+      this.setStatus("麦克风不可用，请点「开始练习」重新授权");
+    });
   },
 
   /** 结算浮层 → 查看演奏详情：隐藏浮层并进入回顾模式 */
@@ -1579,8 +1615,10 @@ const App = {
     const label = { idle: "开始练习", countdown: "暂停", practicing: "暂停", paused: "继续", finished: "开始练习" }[this.state];
     main.textContent = label;
     retry.disabled = this.state === "idle";
-    // 横屏底部按钮同步（重开始终可用，主按钮只显示 暂停/继续）
-    document.getElementById("lsPause").textContent = this.state === "paused" ? "继续" : "暂停";
+    // 横屏底部按钮同步（重开始终可用，主按钮按状态显示 开始/暂停/继续）
+    document.getElementById("lsPause").textContent =
+      this.state === "paused" ? "继续" :
+      (this.state === "idle" || this.state === "finished") ? "开始" : "暂停";
     // 练习中锁定滑块，避免时间轴错乱
     document.getElementById("sliderBpm").disabled = this.state !== "idle";
   },
